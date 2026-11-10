@@ -1,0 +1,101 @@
+name: Build APK
+
+# Builds the installable Android APK, then installs it on an emulator and
+# checks the session logic end to end. Download the APK from the run's
+# "Artifacts" section.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - 'claude/**'
+    paths-ignore:
+      - '**.md'
+
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type-check and unit tests
+        run: npm run check
+
+      - name: Generate the native Android project
+        run: npx expo prebuild --platform android --clean --no-install
+        env:
+          CI: 1
+
+      - name: Build the phone APK (arm)
+        working-directory: android
+        run: ./gradlew assembleRelease -PreactNativeArchitectures=armeabi-v7a,arm64-v8a --no-daemon --stacktrace
+
+      - name: Collect and inspect the APK
+        run: |
+          mkdir -p dist
+          cp android/app/build/outputs/apk/release/app-release.apk dist/grove.apk
+          ls -la dist
+          BT="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$BT/aapt2" dump badging dist/grove.apk | grep -E "^package|sdkVersion|native-code|uses-permission|application-label:"
+          echo "--- native libraries and bundle"
+          unzip -l dist/grove.apk | grep -E "lib/.*/lib(rnskia|reanimated|worklets|hermes|appmodules)|index.android.bundle" || true
+          "$BT/apksigner" verify --print-certs dist/grove.apk | head -3
+
+      - name: Upload the APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: grove-apk
+          path: dist/grove.apk
+          if-no-files-found: error
+
+      - name: Build the emulator APK (x86_64)
+        working-directory: android
+        run: |
+          ./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon
+          cp app/build/outputs/apk/release/app-release.apk ../dist/grove-x86_64.apk
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Smoke test on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          script: bash scripts/smoke-test.sh dist/grove-x86_64.apk smoke-output
+
+      - name: Upload smoke test screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test
+          path: smoke-output
+          if-no-files-found: ignore
