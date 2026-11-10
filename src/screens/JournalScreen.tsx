@@ -5,10 +5,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { haptic } from '../feel/haptics';
 import { setUpNotifications } from '../feel/notify';
 import { CONFIG } from '../game/config';
+import { ANIMALS, levelProgress } from '../game/nature';
 import { RARITY_LABEL, SPECIES, getSpecies } from '../game/species';
 import { ringProgress, streakAtRisk } from '../game/streak';
 import { dayIndex, dayKey, formatMinutes, weekStart } from '../game/time';
 import { PlantSheet } from '../render/PlantSprite';
+import { hasAnimalSprite } from '../render/creatures';
+import { grantText } from './IslandScreen';
 import { useStore } from '../store/store';
 import { RingRow } from '../ui/Ring';
 import { Button, Card, CoinIcon, PressableScale, Toggle, Txt } from '../ui/kit';
@@ -48,6 +51,7 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
   const setGoal = useStore((s) => s.setGoal);
   const updateSettings = useStore((s) => s.updateSettings);
   const devAddCoins = useStore((s) => s.devAddCoins);
+  const devAddFocus = useStore((s) => s.devAddFocus);
   const devSkipTime = useStore((s) => s.devSkipTime);
   const resetAll = useStore((s) => s.resetAll);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -94,6 +98,28 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
     [cell, cellH, iconSize, progress.discovered],
   );
   const gridH = Math.ceil(SPECIES.length / 4) * (cellH + GAP) - GAP;
+
+  // Wildlife: three wider cards per row, each with room for a hint.
+  const wildCell = (w - 36 - 2 * GAP) / 3;
+  const wildIcon = 46;
+  const wildH = wildIcon + 74;
+  const met = ANIMALS.filter((a) => game.nature.discovered[a.id] != null).length;
+  const wildItems = useMemo(
+    () =>
+      ANIMALS.map((a, i) => ({ a, i }))
+        .filter(({ a }) => hasAnimalSprite(a.id))
+        .map(({ a, i }) => ({
+          animal: a.id,
+          cx: (i % 3) * (wildCell + GAP) + wildCell / 2,
+          top: Math.floor(i / 3) * (wildH + GAP) + 8,
+          size: wildIcon,
+          silhouette: game.nature.discovered[a.id] == null,
+        })),
+    [wildCell, wildH, game.nature.discovered],
+  );
+  const wildGridH = Math.ceil(ANIMALS.length / 3) * (wildH + GAP) - GAP;
+  const level = levelProgress(economy.lifetimeFocusMin);
+  const SWARM_ICON: Record<string, string> = { butterfly: '🦋', bee: '🐝', firefly: '✨' };
 
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.paper }]} testID="journal-screen">
@@ -242,6 +268,47 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
           <PlantSheet width={w - 36} height={gridH} items={sheetItems} style={{ position: 'absolute', left: 0, top: 0 }} />
         </View>
 
+        <SectionTitle>{`Wildlife  ${met} / ${ANIMALS.length}`}</SectionTitle>
+        <Card style={{ marginBottom: 10, paddingVertical: 12 }}>
+          <View style={styles.rowBetween}>
+            <Txt weight="black" size={15} testID="journal-level">
+              {`Island level ${level.level}`}
+            </Txt>
+            <Txt weight="bold" size={12.5} color={colors.inkFaint}>
+              {`${formatMinutes(level.minutesToNext)} to ${grantText(level.nextGrants)}`}
+            </Txt>
+          </View>
+          <View style={[styles.meter, { backgroundColor: '#FBF0D6' }]}>
+            <View style={[styles.meterFill, { backgroundColor: colors.coin, width: `${Math.min(1, level.fraction) * 100}%` }]} />
+          </View>
+          <Txt weight="bold" size={12} color={colors.inkFaint} style={{ marginTop: 6 }}>
+            Focus raises your island level. Each level brings water, rocks and more to place, and animals move in when the island suits them.
+          </Txt>
+        </Card>
+        <View style={styles.grid}>
+          {ANIMALS.map((a) => {
+            const found = game.nature.discovered[a.id] != null;
+            return (
+              <View
+                key={a.id}
+                style={[styles.cell, { width: wildCell, height: wildH, backgroundColor: found ? '#EAF6EC' : '#F1ECE0', borderColor: found ? colors.leaf : 'transparent' }]}
+                testID={`wild-${a.id}`}
+              >
+                <View style={[styles.center, { height: wildIcon }]}>
+                  {!hasAnimalSprite(a.id) && <Txt size={26} style={{ opacity: found ? 1 : 0.25 }}>{SWARM_ICON[a.id] ?? '🐾'}</Txt>}
+                </View>
+                <Txt weight="heavy" size={12.5} center numberOfLines={1} style={{ marginTop: 3 }} color={found ? colors.ink : colors.inkFaint}>
+                  {found ? a.name : '???'}
+                </Txt>
+                <Txt weight="bold" size={10.5} center numberOfLines={2} color={found ? colors.inkSoft : colors.inkFaint} style={{ marginTop: 1 }}>
+                  {found ? (a.nocturnal ? 'Comes out at night' : a.blurb) : a.hint}
+                </Txt>
+              </View>
+            );
+          })}
+          <PlantSheet width={w - 36} height={wildGridH} items={wildItems} style={{ position: 'absolute', left: 0, top: 0 }} />
+        </View>
+
         <SectionTitle>Recent sessions</SectionTitle>
         <Card style={{ paddingVertical: 6 }}>
           {recent.length === 0 ? (
@@ -309,6 +376,9 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
             </View>
             <View style={styles.devRow}>
               <Button label="+100 coins" tone="ghost" onPress={() => devAddCoins(100)} style={styles.devBtn} testID="dev-coins" feel="light" />
+              <Button label="+2h focus" tone="ghost" onPress={() => devAddFocus(120)} style={styles.devBtn} testID="dev-focus" feel="light" />
+            </View>
+            <View style={styles.devRow}>
               <Button
                 label={confirmReset ? 'Really erase?' : 'Erase all data'}
                 tone={confirmReset ? 'danger' : 'ghost'}

@@ -79,7 +79,7 @@ export function claimLevels(state: GameState): { state: GameState; granted: Part
 
 export const TERRAIN_INFO: Record<TerrainKind, { name: string; blurb: string }> = {
   water: { name: 'Water', blurb: 'Join tiles into ponds and lakes. At the edge it becomes a waterfall.' },
-  rock: { name: 'Rock', blurb: 'A sunny stone. Lizards of thought rest here.' },
+  rock: { name: 'Rock', blurb: 'A sunny stone to rest beside.' },
   log: { name: 'Hollow log', blurb: 'A home for small, shy creatures.' },
   hive: { name: 'Beehive', blurb: 'Bees come when there are flowers to visit.' },
   campfire: { name: 'Campfire', blurb: 'A warm glow for long evenings.' },
@@ -289,7 +289,7 @@ export const ANIMALS: readonly AnimalDef[] = [
   {
     id: 'frog',
     name: 'Frog',
-    blurb: 'Croaks a little louder after every pond.',
+    blurb: 'Croaks louder after every pond.',
     hint: 'Place water',
     movement: 'hop',
     shy: 0.3,
@@ -429,9 +429,11 @@ export function discoverWildlife(
   state: GameState,
   vitality: number,
   now: number,
+  night = true,
 ): { state: GameState; arrived: string[] } {
   const arrived = residents(state.world, state.seeds, vitality)
-    .filter((r) => r.present && state.nature.discovered[r.id] == null)
+    // Night animals are only met at night: they cannot be seen during the day.
+    .filter((r) => r.present && state.nature.discovered[r.id] == null && (night || !ANIMAL_BY_ID[r.id].nocturnal))
     .map((r) => r.id);
   if (arrived.length === 0) return { state, arrived };
   const discovered = { ...state.nature.discovered };

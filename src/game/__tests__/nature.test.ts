@@ -225,6 +225,16 @@ describe('wildlife', () => {
     state = again.state;
   });
 
+  it('meets night animals only at night', () => {
+    let state = island({ cherry: 4 });
+    const day = discoverWildlife(state, 1, T0, false);
+    expect(day.arrived).not.toContain('owl');
+    expect(day.arrived).toContain('bird');
+    const night = discoverWildlife(day.state, 1, T0, true);
+    expect(night.arrived).toEqual(['owl']);
+    state = night.state;
+  });
+
   it('has a consistent catalogue', () => {
     const ids = new Set(ANIMALS.map((a) => a.id));
     expect(ids.size).toBe(ANIMALS.length);

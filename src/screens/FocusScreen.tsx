@@ -42,6 +42,7 @@ import { useStore } from '../store/store';
 import { Ring } from '../ui/Ring';
 import { Button, CoinIcon, Pill, PressableScale, Txt } from '../ui/kit';
 import { colors, motion, radius, skyForHour } from '../ui/theme';
+import { grantText } from './IslandScreen';
 import { SeedReveal } from './SeedReveal';
 
 const MILESTONES = CONFIG.session.milestones;
@@ -744,7 +745,21 @@ function CompletionRewards({
     return () => ids.forEach(clearTimeout);
   }, [summary]);
 
+  const leveledUp = summary.levelAfter > summary.levelBefore;
+  useEffect(() => {
+    if (!leveledUp) return;
+    const id = setTimeout(() => {
+      playSound('levelup');
+      haptic('success');
+    }, 1700);
+    return () => clearTimeout(id);
+  }, [leveledUp]);
+
   const rows: { icon: React.ReactNode; text: string }[] = [];
+  if (leveledUp) {
+    const gift = grantText(summary.granted);
+    rows.push({ icon: <Txt size={16}>🏝️</Txt>, text: `Island level ${summary.levelAfter}!${gift ? ` New to place: ${gift}` : ''}` });
+  }
   if (summary.coinsEarned > 0) rows.push({ icon: <CoinIcon size={18} />, text: `+${summary.coinsEarned} coins for ${formatMinutes(summary.minutes)} of focus` });
   if (summary.stake > 0) rows.push({ icon: <CoinIcon size={18} />, text: `Wager won: ${summary.stake} became ${summary.payout}` });
   if (summary.streakAfter > summary.streakBefore) rows.push({ icon: <Txt size={16}>🔥</Txt>, text: `${summary.streakAfter}-day streak` });

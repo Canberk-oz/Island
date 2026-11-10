@@ -5,6 +5,10 @@ sapling grows while you stay in the app. Finish and a random seed drops; leave
 and the sapling withers. Seeds become plants on an island that slowly fades on
 the days you do not focus, and comes back when you do.
 
+The island is alive: focus earns water, rocks and other pieces of nature to
+place, and animals move in when the island suits them. Neglect it and they
+hide, one by one, until you focus again.
+
 Built with Expo (React Native) and TypeScript. Everything is stored on the
 phone; there is no backend.
 
@@ -44,6 +48,11 @@ npm run build:apk     # android/app/build/outputs/apk/release/app-release.apk
 | **Streak** | A day counts with one finished session of 10+ minutes. Days roll over at 04:00. |
 | **Freezes** | One per 120 focused minutes, at most 2 in the pocket. A freeze covers a missed day automatically. They cannot be bought. |
 | **Daily ring** | Progress toward the daily focus goal (default 60 minutes, adjustable in the Journal). |
+| **Island level** | Lifetime focus raises the island level (level 2 at 30 minutes, level 5 at 5 hours, level 10 at 30 hours, then one per 10 hours). Each level hands out nature pieces to place: water, rocks, a hollow log, a beehive, a campfire. |
+| **Water** | Water tiles join up: one or two make a pond, three or more a lake. Water at the front rim of the island falls over the edge. |
+| **Wildlife** | 13 animals, none of them bought. Each needs a habitat, for example a frog needs water, a deer needs 3 trees and a lake, a fox needs 10 plants and a hollow log. The Journal shows who is missing and what they need. |
+| **Hiding** | Animals hide when the island wilts, the shyest first (fox and deer below about 60% vitality), and return when it recovers. None is ever lost. |
+| **Sound** | The island has a soundscape: birds and wind by day, crickets at night, running water where there is water. It gets quieter as the island wilts. Tap an animal to hear it. |
 | **Share** | The Share button renders the island with this week's numbers as a picture. |
 
 All of these numbers live in `src/game/config.ts`.
@@ -73,9 +82,10 @@ src/game/      Pure game logic: no React, no storage, no clock. Fully unit teste
   rewards.ts     seed odds, pity, species pick
   streak.ts      streak, freezes, daily ring
   world.ts       island tiles, planting, growth
+  nature.ts      island levels, nature pieces, water bodies, animal habitats
   economy.ts     coins and wager
 src/store/     Zustand store: wires the pure logic to the clock and AsyncStorage
-src/render/    Skia drawing: sapling, plants, island, sky, particles
+src/render/    Skia drawing: sapling, plants, island, water, animals, sky, particles
 src/screens/   Focus, Island, Journal, seed reveal, share card
 src/feel/      Haptics, sound, notifications
 src/ui/        Theme and small UI parts
@@ -96,7 +106,8 @@ npm run check         # TypeScript + unit tests
 
 Journal → Settings → *Developer tools* adds a 10 second test session to the
 duration dial, plus buttons to skip the clock forward (to watch the island
-fade), add coins and erase all data.
+fade and the animals hide), add coins, add focus time (to raise the island
+level) and erase all data.
 
 Every session event is written to the device log, which helps when testing the
 leave detection on a real phone:
@@ -117,6 +128,7 @@ npm run web
 
 ## Assets
 
-Sounds are synthesised by `scripts/make-sounds.py` and the icons are drawn by
+Sounds (effects, animal calls and the looping ambience) are synthesised by
+`scripts/make-sounds.py` and the icons are drawn by
 `scripts/make-icons.py`, so nothing in the repository needs a licence from a
 third party. The typeface is Nunito (SIL Open Font License).

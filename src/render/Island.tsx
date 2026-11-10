@@ -1,14 +1,17 @@
-import { Group, Oval, Path, Skia, interpolateColors } from '@shopify/react-native-skia';
+import { BlurMask, Group, Oval, Path, Skia, interpolateColors } from '@shopify/react-native-skia';
 import React, { useEffect, useMemo } from 'react';
 import { useDerivedValue, useSharedValue, withSpring, type SharedValue } from 'react-native-reanimated';
 import { CONFIG } from '../game/config';
 import { wiltThreshold } from '../game/decay';
 import { hash01 } from '../game/rng';
-import type { Seed, World } from '../game/types';
+import type { Seed, TerrainKind, World } from '../game/types';
 import { isTileInRadius, parseTile, tilesInRadius } from '../game/world';
 import { motion } from '../ui/theme';
 import { PlantBody, PlantGlow } from './PlantSprite';
+import { NO_POKE, Wildlife, type Poke } from './Wildlife';
+import { terrainSprite } from './creatures';
 import { plantSprite } from './plants';
+import { EMPTY_SCENE, type WildlifeScene } from './wildlife';
 
 export interface IslandLayout {
   cx: number;
@@ -102,6 +105,163 @@ function buildGround(l: IslandLayout, radius: number) {
   };
 }
 
+/** Geometry of the water on the island: the sunken surface and the falls at the front rim. */
+function buildWater(l: IslandLayout, radius: number, terrain: Record<string, TerrainKind>) {
+  const surface = Skia.PathBuilder.Make();
+  const falls = Skia.PathBuilder.Make();
+  const centres: { sx: number; sy: number }[] = [];
+  /** Each fall: the two top corners of the stream and how far it drops. */
+  const streams: { ax: number; ay: number; bx: number; by: number; drop: number }[] = [];
+  const drop = l.depth + l.tw * 0.75;
+  for (const key of Object.keys(terrain).sort()) {
+    if (terrain[key] !== 'water') continue;
+    const { x, y } = parseTile(key);
+    if (!isTileInRadius(x, y, radius)) continue;
+    const { sx, sy } = tileToScreen(l, x, y);
+    diamond(surface, sx, sy, l.tw + 0.8, l.th + 0.4);
+    centres.push({ sx, sy });
+    const edge = (x0: number, y0: number, x1: number, y1: number) => {
+      // The stream uses the middle 60% of the tile edge.
+      const ax = x0 + (x1 - x0) * 0.2;
+      const ay = y0 + (y1 - y0) * 0.2;
+      const bx = x0 + (x1 - x0) * 0.8;
+      const by = y0 + (y1 - y0) * 0.8;
+      falls.moveTo(ax, ay).lineTo(bx, by).lineTo(bx, by + drop).lineTo(ax, ay + drop).close();
+      streams.push({ ax, ay, bx, by, drop });
+    };
+    if (!isTileInRadius(x, y + 1, radius)) edge(sx - l.tw / 2, sy, sx, sy + l.th / 2);
+    if (!isTileInRadius(x + 1, y, radius)) edge(sx, sy + l.th / 2, sx + l.tw / 2, sy);
+  }
+  const mist = Skia.PathBuilder.Make();
+  for (const f of streams) mist.addCircle((f.ax + f.bx) / 2, (f.ay + f.by) / 2 + f.drop, l.tw * 0.2);
+  return { surface: surface.build(), falls: falls.build(), mist: mist.build(), centres, streams, empty: centres.length === 0 };
+}
+
+function IslandWater({
+  layout: l,
+  radius,
+  terrain,
+  vitality,
+  clock,
+}: {
+  layout: IslandLayout;
+  radius: number;
+  terrain: Record<string, TerrainKind>;
+  vitality: SharedValue<number>;
+  clock: SharedValue<number>;
+}) {
+  const water = useMemo(() => buildWater(l, radius, terrain), [l, radius, terrain]);
+  const sink = l.th * 0.16;
+
+  // Clear blue while the island is alive, murky when it is neglected.
+  const deep = useDerivedValue(() => interpolateColors(vitality.value, [0, 1], ['#6F7A5E', '#2F8FCF']));
+  const top = useDerivedValue(() => interpolateColors(vitality.value, [0, 1], ['#8E9A78', '#56BDEE']));
+  const shimmerOpacity = useDerivedValue(() => 0.15 + 0.5 * vitality.value);
+  const surfaceShift = useMemo(() => [{ translateY: sink }], [sink]);
+
+  const shimmer = useDerivedValue(() => {
+    const b = Skia.PathBuilder.Make();
+    const t = clock.value / 1000;
+    const n = Math.min(water.centres.length, 28);
+    for (let i = 0; i < n; i++) {
+      const c = water.centres[i];
+      for (let k = 0; k < 2; k++) {
+        const x = c.sx + Math.sin(t * 0.55 + i * 1.9 + k * 2.4) * l.tw * 0.2;
+        const y = c.sy + sink + Math.cos(t * 0.4 + i * 1.3 + k * 1.1) * l.th * 0.17;
+        const w = l.tw * (0.07 + 0.05 * Math.sin(t * 0.9 + i + k));
+        b.addOval({ x: x - w, y: y - 1, width: w * 2, height: 2 });
+      }
+    }
+    return b.build();
+  });
+
+  const streaks = useDerivedValue(() => {
+    const b = Skia.PathBuilder.Make();
+    const t = clock.value / 1000;
+    for (let i = 0; i < water.streams.length; i++) {
+      const f = water.streams[i];
+      for (let k = 0; k < 4; k++) {
+        const a = 0.12 + 0.25 * k;
+        const x = f.ax + (f.bx - f.ax) * a;
+        const y0 = f.ay + (f.by - f.ay) * a;
+        const k1 = (t * (0.9 + 0.13 * k) + k * 0.37 + i * 0.21) % 1;
+        const len = f.drop * 0.22;
+        const y = y0 + k1 * (f.drop - len);
+        b.addRRect({ rect: { x: x - 1.2, y, width: 2.4, height: len }, rx: 1.2, ry: 1.2 });
+      }
+    }
+    return b.build();
+  });
+
+  if (water.empty) return null;
+  return (
+    <Group>
+      {/* The bank shows as a thin strip of earth along the far edges of the water. */}
+      <Path path={water.surface} color="#6B4A33" />
+      <Group clip={water.surface}>
+        <Group transform={surfaceShift}>
+          <Path path={water.surface} color={deep} />
+        </Group>
+        <Group transform={[{ translateY: sink + l.th * 0.07 }]}>
+          <Path path={water.surface} color={top} opacity={0.75} />
+        </Group>
+        <Path path={shimmer} color="#FFFFFF" opacity={shimmerOpacity} />
+      </Group>
+      {water.streams.length > 0 && (
+        <Group>
+          <Path path={water.falls} color={top} opacity={0.92} />
+          <Path path={streaks} color="#FFFFFF" opacity={0.6} />
+          <Path path={water.mist} color="#FFFFFF" opacity={0.75}>
+            <BlurMask blur={l.tw * 0.11} style="normal" />
+          </Path>
+        </Group>
+      )}
+    </Group>
+  );
+}
+
+/** A rock, log, beehive or campfire standing on a tile. */
+function IslandObject({
+  kind,
+  unit,
+  sx,
+  sy,
+  clock,
+  popIn,
+}: {
+  kind: TerrainKind;
+  unit: number;
+  sx: number;
+  sy: number;
+  clock: SharedValue<number>;
+  popIn: boolean;
+}) {
+  const sprite = useMemo(() => terrainSprite(kind, unit), [kind, unit]);
+  const pop = useSharedValue(popIn ? 0 : 1);
+  useEffect(() => {
+    if (popIn) pop.value = withSpring(1, motion.pop);
+  }, [popIn, pop]);
+  const transform = useDerivedValue(() => [{ translateX: sx }, { translateY: sy }, { scale: pop.value }]);
+  const flicker = useDerivedValue(() => {
+    const t = clock.value / 1000;
+    return [{ scaleX: 1 + Math.sin(t * 9) * 0.06 }, { scaleY: 1 + Math.sin(t * 13 + 1) * 0.1 + Math.sin(t * 7) * 0.05 }];
+  });
+  return (
+    <Group zIndex={sy}>
+      <Oval x={sx - sprite.width * 0.45} y={sy - sprite.width * 0.1} width={sprite.width * 0.9} height={sprite.width * 0.24} color="#12301F" opacity={0.16} />
+      <Group transform={transform}>
+        <PlantBody parts={sprite.parts} />
+        {sprite.alt && (
+          <Group transform={flicker}>
+            <PlantGlow parts={sprite.alt} />
+            <PlantBody parts={sprite.alt} />
+          </Group>
+        )}
+      </Group>
+    </Group>
+  );
+}
+
 interface PlantProps {
   speciesId: string;
   unit: number;
@@ -139,7 +299,7 @@ function IslandPlant({ speciesId, unit, sx, sy, threshold, phase, vitality, cloc
   const glowOpacity = useDerivedValue(() => 1 - Math.min(1, Math.max(0, (threshold - vitality.value) / BAND)));
 
   return (
-    <Group>
+    <Group zIndex={sy}>
       <Oval
         x={sx - sprite.halfWidth * 0.8}
         y={sy - sprite.halfWidth * 0.22}
@@ -163,8 +323,12 @@ function IslandPlant({ speciesId, unit, sx, sy, threshold, phase, vitality, cloc
 
 interface IslandProps {
   layout: IslandLayout;
-  world: Pick<World, 'tiles' | 'radius'>;
+  world: Pick<World, 'tiles' | 'radius' | 'terrain'>;
   seeds: Record<string, Seed>;
+  /** The animals that are out (see `buildWildlife`). */
+  scene?: WildlifeScene;
+  /** The latest tap on an animal. */
+  poke?: SharedValue<Poke>;
   /** Displayed vitality (animate it to make the island fade or revive). */
   vitality: SharedValue<number>;
   clock: SharedValue<number>;
@@ -179,11 +343,13 @@ interface IslandProps {
   still?: boolean;
 }
 
-/** The floating island: rock, earth, grass tiles and every plant. Must be used inside a Canvas. */
+/** The floating island: rock, earth, water, plants and wildlife. Must be used inside a Canvas. */
 export function Island({
   layout: l,
   world,
   seeds,
+  scene = EMPTY_SCENE,
+  poke,
   vitality,
   clock,
   showFreeTiles = false,
@@ -193,6 +359,8 @@ export function Island({
   still = false,
 }: IslandProps) {
   const ground = useMemo(() => buildGround(l, world.radius), [l, world.radius]);
+  const ownPoke = useSharedValue<Poke>(NO_POKE);
+  const terrain = world.terrain;
 
   const grassA = useDerivedValue(() => interpolateColors(vitality.value, [0, 1], ['#C6BB86', '#7FD67F']));
   const grassB = useDerivedValue(() => interpolateColors(vitality.value, [0, 1], ['#BBAF7B', '#71CB73']));
@@ -207,12 +375,12 @@ export function Island({
   const free = useMemo(() => {
     const b = Skia.PathBuilder.Make();
     for (const t of ground.tiles) {
-      if (world.tiles[t.key]) continue;
+      if (world.tiles[t.key] || terrain[t.key]) continue;
       const { sx, sy } = tileToScreen(l, t.x, t.y);
       diamond(b, sx, sy, l.tw, l.th, l.tw * 0.07);
     }
     return b.build();
-  }, [ground, world.tiles, l]);
+  }, [ground, world.tiles, terrain, l]);
   const freeOpacity = useDerivedValue(() => 0.3 + 0.25 * Math.sin(clock.value / 320));
 
   const selected = useMemo(() => {
@@ -243,6 +411,20 @@ export function Island({
     [ground, world.tiles, world.radius, seeds, l],
   );
 
+  const objects = useMemo(
+    () =>
+      ground.tiles
+        .filter((t) => terrain[t.key] && terrain[t.key] !== 'water')
+        .map((t) => {
+          const { sx, sy } = tileToScreen(l, t.x, t.y);
+          return { key: t.key, kind: terrain[t.key], sx, sy: sy + l.th * 0.1 };
+        }),
+    [ground, terrain, l],
+  );
+
+  // Plants, objects and animals are siblings in this group: Skia sorts them by
+  // zIndex (their ground position on screen) every frame, so an animal passes
+  // behind the trees in front of it.
   return (
     <Group transform={float}>
       <Path path={ground.rockBack} color="#5A3A28" />
@@ -252,6 +434,7 @@ export function Island({
       <Path path={ground.lip} color={lipColor} />
       <Path path={ground.topA} color={grassA} />
       <Path path={ground.topB} color={grassB} />
+      <IslandWater layout={l} radius={world.radius} terrain={terrain} vitality={vitality} clock={clock} />
       {showFreeTiles && <Path path={free} color="#FFFFFF" opacity={freeOpacity} />}
       {selected && <Path path={selected} color="#FFFFFF" style="stroke" strokeWidth={3} strokeJoin="round" opacity={0.95} />}
       {plants.map((p) => (
@@ -268,6 +451,10 @@ export function Island({
           popIn={poppedTile === p.key}
         />
       ))}
+      {objects.map((o) => (
+        <IslandObject key={`${o.key}:${o.kind}`} kind={o.kind} unit={l.unit} sx={o.sx} sy={o.sy} clock={clock} popIn={poppedTile === o.key} />
+      ))}
+      <Wildlife scene={scene} clock={clock} vitality={vitality} poke={poke ?? ownPoke} tileW={l.tw} />
     </Group>
   );
 }

@@ -1,7 +1,9 @@
 import { BlurMask, Canvas, Group, Path } from '@shopify/react-native-skia';
 import React, { useMemo } from 'react';
-import { StyleSheet, type StyleProp, type ViewStyle } from 'react-native';
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { getSpecies } from '../game/species';
+import type { TerrainKind } from '../game/types';
+import { animalSprite, terrainSprite } from './creatures';
 import { plantSprite, type PlantPart } from './plants';
 
 function PartPath({ part, wiltedLook }: { part: PlantPart; wiltedLook: boolean }) {
@@ -50,17 +52,42 @@ export function hasGlow(parts: PlantPart[]) {
   return parts.some((p) => p.blur != null);
 }
 
-function IconDrawing({ speciesId, size, cx, top, silhouette }: { speciesId: string; size: number; cx: number; top: number; silhouette: boolean }) {
-  const sprite = useMemo(() => {
-    const s = getSpecies(speciesId);
-    // Fit the plant's height into the icon.
-    return plantSprite(speciesId, (size * 0.8) / (s.size * 1.15));
-  }, [speciesId, size]);
+interface IconProps {
+  speciesId?: string;
+  terrain?: TerrainKind;
+  animal?: string;
+  size: number;
+  cx: number;
+  top: number;
+  silhouette: boolean;
+}
+
+function iconParts({ speciesId, terrain, animal, size }: Pick<IconProps, 'speciesId' | 'terrain' | 'animal' | 'size'>): PlantPart[] {
+  if (terrain) {
+    const s = terrainSprite(terrain, size * 1.05);
+    return [...s.parts, ...(s.alt ?? [])];
+  }
+  if (animal) {
+    // Measure at a reference size, then fit the animal into the icon.
+    const ref = animalSprite(animal, 100);
+    if (!ref) return [];
+    const unit = (size * 0.82 * 100) / Math.max(ref.width, ref.height);
+    const s = animalSprite(animal, unit)!;
+    return [...s.parts, ...(s.rest ?? [])];
+  }
+  const sp = getSpecies(speciesId ?? '');
+  // Fit the plant's height into the icon.
+  return plantSprite(sp.id, (size * 0.8) / (sp.size * 1.15)).parts;
+}
+
+function IconDrawing(props: IconProps) {
+  const { size, cx, top, silhouette, speciesId, terrain, animal } = props;
+  const parts = useMemo(() => iconParts({ speciesId, terrain, animal, size }), [speciesId, terrain, animal, size]);
   return (
     <Group transform={[{ translateX: cx }, { translateY: top + size * 0.93 }]}>
       {silhouette ? (
         <Group opacity={0.22}>
-          {sprite.parts.map((p, i) =>
+          {parts.map((p, i) =>
             p.blur == null ? (
               <Path
                 key={i}
@@ -75,8 +102,8 @@ function IconDrawing({ speciesId, size, cx, top, silhouette }: { speciesId: stri
         </Group>
       ) : (
         <>
-          <PlantGlow parts={sprite.parts} />
-          <PlantBody parts={sprite.parts} />
+          <PlantGlow parts={parts} />
+          <PlantBody parts={parts} />
         </>
       )}
     </Group>
@@ -86,24 +113,31 @@ function IconDrawing({ speciesId, size, cx, top, silhouette }: { speciesId: stri
 /** A small standalone picture of a species, for cards. */
 export function PlantIcon({
   speciesId,
+  terrain,
+  animal,
   size,
   silhouette = false,
   style,
 }: {
-  speciesId: string;
+  speciesId?: string;
+  terrain?: TerrainKind;
+  animal?: string;
   size: number;
   silhouette?: boolean;
   style?: StyleProp<ViewStyle>;
 }) {
   return (
     <Canvas style={StyleSheet.flatten([{ width: size, height: size }, style])}>
-      <IconDrawing speciesId={speciesId} size={size} cx={size / 2} top={0} silhouette={silhouette} />
+      <IconDrawing speciesId={speciesId} terrain={terrain} animal={animal} size={size} cx={size / 2} top={0} silhouette={silhouette} />
     </Canvas>
   );
 }
 
 export interface SheetItem {
-  speciesId: string;
+  /** Exactly one of these says what to draw. */
+  speciesId?: string;
+  terrain?: TerrainKind;
+  animal?: string;
   /** Centre x and top y of the icon inside the sheet. */
   cx: number;
   top: number;
@@ -116,11 +150,25 @@ export interface SheetItem {
  * canvas per item: a single GPU surface is far cheaper than dozens.
  */
 export function PlantSheet({ width, height, items, style }: { width: number; height: number; items: SheetItem[]; style?: StyleProp<ViewStyle> }) {
+  // The wrapping View is what makes the sheet ignore touches: a Skia canvas
+  // does not honour pointerEvents itself on every platform, and this sheet
+  // usually lies on top of the buttons it decorates.
   return (
-    <Canvas style={StyleSheet.flatten([{ width, height }, style])} pointerEvents="none">
-      {items.map((it, i) => (
-        <IconDrawing key={`${it.speciesId}:${i}`} speciesId={it.speciesId} size={it.size} cx={it.cx} top={it.top} silhouette={!!it.silhouette} />
-      ))}
-    </Canvas>
+    <View pointerEvents="none" style={StyleSheet.flatten([{ width, height }, style])}>
+      <Canvas style={{ width, height }}>
+        {items.map((it, i) => (
+        <IconDrawing
+          key={`${it.speciesId ?? it.terrain ?? it.animal}:${i}`}
+          speciesId={it.speciesId}
+          terrain={it.terrain}
+          animal={it.animal}
+          size={it.size}
+          cx={it.cx}
+          top={it.top}
+          silhouette={!!it.silhouette}
+        />
+        ))}
+      </Canvas>
+    </View>
   );
 }

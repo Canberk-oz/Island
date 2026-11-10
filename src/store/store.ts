@@ -13,7 +13,10 @@ import {
   type ResolveMode,
 } from '../game/engine';
 import type { CompletionSummary, GameState, Seed, WitherSummary } from '../game/types';
-import { digUp, plantSeed } from '../game/world';
+import { claimLevels, discoverWildlife, placeTerrain, removeTerrain } from '../game/nature';
+import { vitalityNow } from '../game/decay';
+import type { TerrainKind } from '../game/types';
+import { digUp, growIsland, plantSeed } from '../game/world';
 
 const STORAGE_KEY = 'grove/save/v1';
 
@@ -73,12 +76,20 @@ interface Store {
   dismissResult: () => void;
   plant: (seedId: string, x: number, y: number) => { ok: boolean; islandGrew: boolean };
   dig: (x: number, y: number) => void;
+  /** Place a nature piece from the stock on a tile. */
+  placeNature: (kind: TerrainKind, x: number, y: number) => { ok: boolean; islandGrew: boolean };
+  /** Pick a nature piece back up. */
+  liftNature: (x: number, y: number) => void;
+  /** Note animals that moved in for the first time. Returns their ids. */
+  discover: (night: boolean) => string[];
   pouch: () => { seed: Seed; isNewSpecies: boolean } | null;
   setGoal: (minutes: number) => void;
   updateSettings: (patch: Partial<Settings>) => void;
   notify: (tone: Notice['tone'], text: string) => void;
   clearNotice: () => void;
   devAddCoins: (amount: number) => void;
+  /** Developer: add lifetime focus minutes (raises the island level). */
+  devAddFocus: (minutes: number) => void;
   devSkipTime: (hours: number) => void;
   resetAll: () => void;
 }
@@ -206,6 +217,25 @@ export const useStore = create<Store>((set, get) => {
 
     dig: (x, y) => set({ game: digUp(get().game, x, y) }),
 
+    placeNature: (kind, x, y) => {
+      const res = placeTerrain(get().game, kind, x, y, growIsland);
+      if (!res.ok) return { ok: false, islandGrew: false };
+      set({ game: res.state });
+      log('island:placed', `${kind} tile=${x},${y}`);
+      return { ok: true, islandGrew: res.islandGrew };
+    },
+
+    liftNature: (x, y) => set({ game: removeTerrain(get().game, x, y) }),
+
+    discover: (night) => {
+      const game = get().game;
+      const res = discoverWildlife(game, vitalityNow(game.world, now()), now(), night);
+      if (res.arrived.length === 0) return [];
+      set({ game: res.state });
+      log('island:arrived', res.arrived.join(','));
+      return res.arrived;
+    },
+
     pouch: () => {
       const res = buyPouch(get().game, now(), Math.random);
       if (!res.ok) return null;
@@ -219,6 +249,12 @@ export const useStore = create<Store>((set, get) => {
 
     notify: (tone, text) => set({ notice: { id: noticeId++, tone, text } }),
     clearNotice: () => set({ notice: null }),
+
+    devAddFocus: (minutes) => {
+      const game = get().game;
+      const next = { ...game, economy: { ...game.economy, lifetimeFocusMin: game.economy.lifetimeFocusMin + minutes } };
+      set({ game: claimLevels(next).state });
+    },
 
     devAddCoins: (amount) => {
       const game = get().game;

@@ -6,7 +6,8 @@
 # It drives the real app with adb and asserts on the "[grove] ..." event lines
 # the app writes to the device log. Covered: launch, leaving the app (wither),
 # a short absence (grace), a forced stop during a session, a complete one
-# minute session with seed reveal and planting, and persistence over restarts.
+# minute session with seed reveal and planting (which also opens the island
+# with its soundscape), and persistence over restarts.
 set -u
 
 APK="${1:?usage: smoke-test.sh app.apk [output-dir]}"
@@ -171,7 +172,8 @@ if wait_for "session:start seconds=60" 1 20; then
   tap "Plant it" 500 800
   sleep 4
   shot 09-island
-  adb shell input tap $((W / 2)) $((H / 2))
+  # The centre tile of the island sits at 45% of the screen height.
+  adb shell input tap $((W / 2)) $((H * 45 / 100))
   if wait_for "island:planted" 1 10; then pass "seed was planted on the island"; else fail "planting did not happen"; fi
   sleep 3
   shot 10-planted
