@@ -45,7 +45,7 @@ const T0 = Date.UTC(2026, 10, 9, 12, 0, 0);
 const MIN = 60_000;
 
 function world(partial: Partial<World> = {}): World {
-  return { tiles: {}, radius: 1, vitality: 1, vitalityAt: T0, graceUntil: null, ...partial };
+  return { tiles: {}, radius: 1, vitality: 1, vitalityAt: T0, graceUntil: null, terrain: {}, ...partial };
 }
 
 /** Run a full session of `minutes` that starts at `at` and is completed on time. */

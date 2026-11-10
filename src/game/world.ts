@@ -34,14 +34,20 @@ export function plantedCount(world: World): number {
   return Object.keys(world.tiles).length;
 }
 
+/** Tiles holding a plant or a nature piece. */
+export function occupiedCount(world: World): number {
+  return Object.keys(world.tiles).length + Object.keys(world.terrain ?? {}).length;
+}
+
 /** Plants still needed before the island grows (0 at the maximum size). */
 export function plantsUntilExpansion(world: World): number {
   if (world.radius >= CONFIG.world.maxRadius) return 0;
   const needed = Math.ceil(tileCount(world.radius) * CONFIG.world.expandAtFill);
-  return Math.max(0, needed - plantedCount(world));
+  return Math.max(0, needed - occupiedCount(world));
 }
 
-function expandIfReady(world: World): World {
+/** Grow the island while it is full enough. The island never shrinks. */
+export function growIsland(world: World): World {
   let next = world;
   while (next.radius < CONFIG.world.maxRadius && plantsUntilExpansion(next) === 0) {
     next = { ...next, radius: next.radius + 1 };
@@ -59,10 +65,10 @@ export function plantSeed(state: GameState, seedId: string, x: number, y: number
   if (seed.tile != null) return { ok: false, reason: 'alreadyPlanted' };
   if (!isTileInRadius(x, y, state.world.radius)) return { ok: false, reason: 'outOfBounds' };
   const key = tileKey(x, y);
-  if (state.world.tiles[key]) return { ok: false, reason: 'occupied' };
+  if (state.world.tiles[key] || state.world.terrain[key]) return { ok: false, reason: 'occupied' };
 
   const planted = { ...state.world, tiles: { ...state.world.tiles, [key]: seedId } };
-  const world = expandIfReady(planted);
+  const world = growIsland(planted);
   return {
     ok: true,
     islandGrew: world.radius > state.world.radius,

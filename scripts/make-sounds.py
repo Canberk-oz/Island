@@ -77,11 +77,12 @@ def shimmer(seconds, base=2093.0):
     return out
 
 
-def write(name, signal, peak=0.7):
+def write(name, signal, peak=0.7, fade_out=True):
     signal = np.asarray(signal, dtype=np.float64)
-    # short fade out so nothing clicks at the end
-    fade = min(len(signal), int(SR * 0.03))
-    signal[-fade:] *= np.linspace(1, 0, fade)
+    # short fade out so nothing clicks at the end (loops must not fade: they wrap around)
+    if fade_out:
+        fade = min(len(signal), int(SR * 0.03))
+        signal[-fade:] *= np.linspace(1, 0, fade)
     m = np.max(np.abs(signal)) or 1.0
     pcm = np.int16(signal / m * peak * 32767)
     path = os.path.join(OUT, name + ".wav")
@@ -185,5 +186,180 @@ def main():
     ), 0.7)
 
 
+# ---------------------------------------------------------------------------
+# Wildlife calls and ambience
+# ---------------------------------------------------------------------------
+
+def sweep(f0, f1, seconds, decay=0.0, shape=1.0):
+    """A sine whose pitch glides from f0 to f1."""
+    t = np.arange(int(SR * seconds)) / SR
+    k = (t / seconds) ** shape
+    f = f0 + (f1 - f0) * k
+    phase = 2 * np.pi * np.cumsum(f) / SR
+    env = np.sin(np.pi * np.minimum(1.0, t / seconds)) * np.exp(-decay * t)
+    return np.sin(phase) * env
+
+
+def bird_phrase(base=3000.0, notes=4, gap=0.07):
+    parts = []
+    for i in range(notes):
+        f0 = base * (1 + 0.25 * rng.random())
+        f1 = f0 * (1.25 if i % 2 else 0.8)
+        parts.append((i * (0.09 + gap * rng.random()), sweep(f0, f1, 0.06 + 0.04 * rng.random()), 1.0))
+    return mix(*parts)
+
+
+def quack():
+    t = np.arange(int(SR * 0.22)) / SR
+    f = 380 - 120 * t / 0.22
+    phase = 2 * np.pi * np.cumsum(f) / SR
+    saw = 2 * ((phase / (2 * np.pi)) % 1.0) - 1
+    # nasal formant: crude resonance with a fast one-pole band
+    y = np.zeros_like(saw)
+    a = b = 0.0
+    for i in range(len(saw)):
+        a += 0.35 * (saw[i] - a)
+        b += 0.35 * (a - b)
+        y[i] = a - b
+    env = np.minimum(1, t / 0.01) * np.exp(-6 * t)
+    return y * env
+
+
+def ribbit():
+    out = []
+    for i in range(2):
+        t = np.arange(int(SR * 0.14)) / SR
+        pulses = (np.sin(2 * np.pi * 28 * t) > 0.2).astype(float)
+        tone = np.sin(2 * np.pi * (220 + 40 * i) * t) + 0.4 * np.sin(2 * np.pi * 660 * t)
+        env = np.sin(np.pi * t / 0.14)
+        out.append((i * 0.2, tone * pulses * env, 1.0))
+    return mix(*out)
+
+
+def splash():
+    return mix(
+        (0, noise_burst(0.5, 9, 0.5), 1.0),
+        (0.02, noise_burst(0.35, 14, 0.15), 0.6),
+        (0.05, pluck(NOTE["E6"], 0.2, 25, 0.1), 0.15),
+        (0.12, pluck(NOTE["G6"], 0.2, 25, 0.1), 0.12),
+    )
+
+
+def squeak():
+    return mix((0, sweep(1800, 2600, 0.07), 1.0), (0.1, sweep(2000, 2900, 0.06), 0.8))
+
+
+def sniff():
+    return mix(*[(i * 0.11, noise_burst(0.06, 50, 0.25), 1.0) for i in range(3)])
+
+
+def yip():
+    return mix((0, sweep(700, 1400, 0.09, shape=0.5), 1.0), (0.16, sweep(800, 1500, 0.08, shape=0.5), 0.8))
+
+
+def snort():
+    return mix((0, noise_burst(0.25, 10, 0.08), 1.0), (0, thunk(120, 0.2, 0.3), 0.4))
+
+
+def buzz(seconds=0.9):
+    t = np.arange(int(SR * seconds)) / SR
+    f = 210 + 15 * np.sin(2 * np.pi * 5 * t)
+    phase = 2 * np.pi * np.cumsum(f) / SR
+    saw = 2 * ((phase / (2 * np.pi)) % 1.0) - 1
+    env = np.sin(np.pi * t / seconds) * (0.7 + 0.3 * np.sin(2 * np.pi * 3 * t))
+    return saw * env * 0.6
+
+
+def hoot():
+    def one(f):
+        t = np.arange(int(SR * 0.32)) / SR
+        return np.sin(2 * np.pi * f * t) * np.sin(np.pi * t / 0.32) ** 2
+    return mix((0, one(392), 1.0), (0.42, one(370), 0.9), (0.62, one(350), 0.9))
+
+
+def twinkle():
+    return mix(*[(i * 0.08, pluck(f, 0.4, 12, 0.2), 0.7) for i, f in enumerate([NOTE["E6"], NOTE["G6"], NOTE["C7"]])])
+
+
+def flutter():
+    return mix(*[(i * 0.05, noise_burst(0.04, 90, 0.6), 0.8 - i * 0.1) for i in range(6)])
+
+
+def loop(signal, crossfade=1.0):
+    """Make a seamless loop by crossfading the tail into the head."""
+    n = int(SR * crossfade)
+    head, body, tail = signal[:n], signal[n:-n], signal[-n:]
+    ramp = np.linspace(0, 1, n)
+    return np.concatenate([tail * (1 - ramp) + head * ramp, body])
+
+
+def ambience(kind, seconds=14.0):
+    n = int(SR * (seconds + 1.0))
+    t = np.arange(n) / SR
+    if kind == "day":
+        wind = noise_burst(seconds + 1.0, 0, 0.01) * (0.6 + 0.4 * np.sin(2 * np.pi * t / 7.0))
+        layers = [(0, wind, 1.6)]
+        for i in range(7):
+            layers.append((0.4 + i * 1.9 + rng.random() * 0.8, bird_phrase(2500 + 1500 * rng.random(), 3 + i % 3), 0.18))
+        sig = mix(*layers)
+    elif kind == "night":
+        cricket = np.zeros(n)
+        for c in range(3):
+            f = 4200 + 300 * c
+            gate = (np.sin(2 * np.pi * (2.2 + 0.3 * c) * t + c) > 0.4).astype(float)
+            chirp = (np.sin(2 * np.pi * 30 * t) > 0).astype(float)
+            cricket += np.sin(2 * np.pi * f * t) * gate * chirp * 0.12
+        wind = noise_burst(seconds + 1.0, 0, 0.006) * 0.8
+        sig = mix((0, cricket, 1.0), (0, wind, 1.0), (5.0, hoot(), 0.12))
+    else:  # water
+        brook = noise_burst(seconds + 1.0, 0, 0.25) * 0.25
+        layers = [(0, brook, 1.0)]
+        for _ in range(26):
+            f = 900 + 1400 * rng.random()
+            layers.append((rng.random() * seconds, sweep(f, f * 1.6, 0.04, decay=20), 0.12))
+        sig = mix(*layers)
+    sig = sig[: n]
+    return loop(sig)
+
+
+def main_wildlife():
+    write("animal_chirp", bird_phrase(3200, 4), 0.5)
+    write("animal_quack", mix((0, quack(), 1.0), (0.24, quack(), 0.8)), 0.55)
+    write("animal_ribbit", ribbit(), 0.5)
+    write("animal_splash", splash(), 0.5)
+    write("animal_squeak", squeak(), 0.4)
+    write("animal_sniff", sniff(), 0.4)
+    write("animal_yip", yip(), 0.45)
+    write("animal_snort", snort(), 0.5)
+    write("animal_buzz", buzz(), 0.35)
+    write("animal_hoot", hoot(), 0.5)
+    write("animal_twinkle", twinkle(), 0.35)
+    write("animal_flutter", flutter(), 0.35)
+
+    write("arrive", mix(
+        (0.00, pluck(NOTE["G5"], 0.8, 6), 0.9),
+        (0.10, pluck(NOTE["C6"], 0.9, 5), 0.9),
+        (0.20, pluck(NOTE["E6"], 1.0, 4.5), 0.9),
+        (0.30, pluck(NOTE["G6"], 1.2, 4), 0.8),
+        (0.2, shimmer(1.0), 0.5),
+    ), 0.6)
+    write("place_water", mix((0, splash(), 1.0), (0.05, pluck(NOTE["C6"], 0.5, 8), 0.25)), 0.55)
+    write("place_stone", mix((0, thunk(130, 0.25, 0.5), 1.0), (0, noise_burst(0.08, 60, 0.4), 0.4)), 0.6)
+    write("levelup", mix(
+        (0.00, chord(["C5", "E5", "G5"], 1.2, 3.5, 0.06), 0.9),
+        (0.35, chord(["D5", "G5", "B5"], 1.2, 3.5, 0.06), 0.9),
+        (0.70, chord(["E5", "G5", "C6", "E6"], 2.0, 2.2, 0.07), 1.0),
+        (0.70, shimmer(1.6), 0.8),
+    ), 0.72)
+
+    global SR
+    full = SR
+    SR = 22050
+    for kind in ("day", "night", "water"):
+        write(f"amb_{kind}", ambience(kind), 0.5, fade_out=False)
+    SR = full
+
+
 if __name__ == "__main__":
     main()
+    main_wildlife()

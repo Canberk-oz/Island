@@ -2,6 +2,7 @@ import { CONFIG } from './config';
 import { feedWorld, vitalityNow } from './decay';
 import { coinsForSession, maxStake, wagerPayout } from './economy';
 import { rollSeed } from './rewards';
+import { claimLevels, createNature, levelFor, sanitizeStock } from './nature';
 import { makeId } from './rng';
 import { earnFreezes, markStreakDay, ringProgress, settleStreak, type StreakSettlement } from './streak';
 import { dayIndex, dayKey } from './time';
@@ -16,7 +17,7 @@ import type {
   WitherSummary,
 } from './types';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export function createInitialState(now: number): GameState {
   return {
@@ -31,6 +32,7 @@ export function createInitialState(now: number): GameState {
       vitality: 1,
       vitalityAt: now,
       graceUntil: null,
+      terrain: {},
     },
     economy: { coins: CONFIG.economy.starterCoins, lifetimeFocusMin: 0, lifetimeSessions: 0 },
     progress: {
@@ -45,6 +47,7 @@ export function createInitialState(now: number): GameState {
       pityCounter: 0,
       discovered: {},
     },
+    nature: createNature(),
   };
 }
 
@@ -253,20 +256,24 @@ export function completeSession(
     seedId: seed.id,
   };
 
-  return {
-    state: {
-      ...state,
-      active: null,
-      sessions: pushSession(state.sessions, record),
-      seeds: { ...state.seeds, [seed.id]: seed },
-      world,
-      progress,
-      economy: {
-        coins: state.economy.coins + coinsEarned + payout,
-        lifetimeFocusMin: state.economy.lifetimeFocusMin + minutes,
-        lifetimeSessions: state.economy.lifetimeSessions + 1,
-      },
+  const levelBefore = levelFor(state.economy.lifetimeFocusMin);
+  const settled: GameState = {
+    ...state,
+    active: null,
+    sessions: pushSession(state.sessions, record),
+    seeds: { ...state.seeds, [seed.id]: seed },
+    world,
+    progress,
+    economy: {
+      coins: state.economy.coins + coinsEarned + payout,
+      lifetimeFocusMin: state.economy.lifetimeFocusMin + minutes,
+      lifetimeSessions: state.economy.lifetimeSessions + 1,
     },
+  };
+  const claimed = claimLevels(settled);
+
+  return {
+    state: claimed.state,
     summary: {
       session: record,
       seed,
@@ -284,6 +291,9 @@ export function completeSession(
       ringClosedNow: ringBefore < 1 && ringAfter >= 1,
       vitalityBefore,
       vitalityAfter: vitalityNow(world, now),
+      levelBefore,
+      levelAfter: levelFor(claimed.state.economy.lifetimeFocusMin),
+      granted: claimed.granted,
     },
   };
 }
@@ -347,14 +357,21 @@ export function migrate(raw: unknown, now: number): GameState {
   const fresh = createInitialState(now);
   if (!raw || typeof raw !== 'object') return fresh;
   const r = raw as Partial<GameState>;
-  return {
+  const state: GameState = {
     ...fresh,
     ...r,
     schemaVersion: SCHEMA_VERSION,
     sessions: Array.isArray(r.sessions) ? r.sessions : [],
     seeds: r.seeds ?? {},
-    world: { ...fresh.world, ...(r.world ?? {}) },
+    world: { ...fresh.world, ...(r.world ?? {}), terrain: { ...(r.world?.terrain ?? {}) } },
     economy: { ...fresh.economy, ...(r.economy ?? {}) },
     progress: { ...fresh.progress, ...(r.progress ?? {}) },
+    nature: {
+      stock: sanitizeStock(r.nature?.stock),
+      levelClaimed: r.nature?.levelClaimed ?? 1,
+      discovered: { ...(r.nature?.discovered ?? {}) },
+    },
   };
+  // Saves from before the living island get the rewards of every level they already reached.
+  return claimLevels(state).state;
 }

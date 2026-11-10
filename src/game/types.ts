@@ -48,6 +48,21 @@ export interface World {
   vitalityAt: number;
   /** Fading is paused until this moment. Null until the first completed session. */
   graceUntil: number | null;
+  /** tile key "x,y" -> nature piece placed on it (water, rock, ...). */
+  terrain: Record<string, TerrainKind>;
+}
+
+export type TerrainKind = 'water' | 'rock' | 'log' | 'hive' | 'campfire';
+
+export const TERRAIN_KINDS: readonly TerrainKind[] = ['water', 'rock', 'log', 'hive', 'campfire'];
+
+export interface Nature {
+  /** Nature pieces waiting to be placed. */
+  stock: Record<TerrainKind, number>;
+  /** Highest island level whose rewards were handed out. */
+  levelClaimed: number;
+  /** animal id -> when it first moved in */
+  discovered: Record<string, number>;
 }
 
 export interface Economy {
@@ -83,6 +98,7 @@ export interface GameState {
   world: World;
   economy: Economy;
   progress: Progress;
+  nature: Nature;
 }
 
 /** Everything the result screen needs after a completed session. */
@@ -103,6 +119,10 @@ export interface CompletionSummary {
   ringClosedNow: boolean;
   vitalityBefore: number;
   vitalityAfter: number;
+  levelBefore: number;
+  levelAfter: number;
+  /** Nature pieces handed out by the level-ups of this session. */
+  granted: Partial<Record<TerrainKind, number>>;
 }
 
 export interface WitherSummary {
