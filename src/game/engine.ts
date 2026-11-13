@@ -4,12 +4,14 @@ import { coinsForSession, maxStake, wagerPayout } from './economy';
 import { rollSeed } from './rewards';
 import { claimLevels, createNature, levelFor, sanitizeStock } from './nature';
 import { makeId } from './rng';
+import { rewardFocus, settleIsland, syncLandmarks } from './stakes';
 import { earnFreezes, markStreakDay, ringProgress, settleStreak, type StreakSettlement } from './streak';
 import { dayIndex, dayKey } from './time';
 import type {
   ActiveSession,
   CompletionSummary,
   GameState,
+  NewsItem,
   Rand,
   Seed,
   SessionRecord,
@@ -17,7 +19,7 @@ import type {
   WitherSummary,
 } from './types';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export function createInitialState(now: number): GameState {
   return {
@@ -47,7 +49,7 @@ export function createInitialState(now: number): GameState {
       pityCounter: 0,
       discovered: {},
     },
-    nature: createNature(),
+    nature: createNature(now),
   };
 }
 
@@ -192,12 +194,16 @@ export function witherSession(
 }
 
 export function completeSession(
-  state: GameState,
+  input: GameState,
   now: number,
   rand: Rand,
 ): { state: GameState; summary: CompletionSummary } {
-  const active = state.active;
+  const active = input.active;
   if (!active) throw new Error('No active session to complete');
+
+  // First account for the time that passed without focus: what it cost is
+  // settled before this session starts to repair it.
+  const state = settleIsland(input, now).state;
 
   const minutes = active.durationSec / 60;
   const today = dayIndex(now);
@@ -205,8 +211,10 @@ export function completeSession(
   const qualifies = minutes >= CONFIG.streak.minQualifyingMin;
 
   // Streak: settle missed days first, then count today.
-  let progress = settleStreak(state.progress, today).progress;
+  const streakSettled = settleStreak(state.progress, today);
+  let progress = streakSettled.progress;
   const streakBefore = progress.streak;
+  const firstOfDay = qualifies && progress.lastStreakDay !== today;
   if (qualifies) progress = markStreakDay(progress, today);
 
   // Daily ring.
@@ -271,9 +279,12 @@ export function completeSession(
     },
   };
   const claimed = claimLevels(settled);
+  const rewarded = rewardFocus(claimed.state, minutes, qualifies, firstOfDay, now, rand);
+  const marked = syncLandmarks(rewarded.state, streakSettled.streakLost, now);
+  const news: NewsItem[] = [...rewarded.news, ...marked.news];
 
   return {
-    state: claimed.state,
+    state: marked.state,
     summary: {
       session: record,
       seed,
@@ -294,6 +305,7 @@ export function completeSession(
       levelBefore,
       levelAfter: levelFor(claimed.state.economy.lifetimeFocusMin),
       granted: claimed.granted,
+      news,
     },
   };
 }
@@ -302,10 +314,19 @@ export function completeSession(
 // Everything else
 // ---------------------------------------------------------------------------
 
-/** Called when the app comes to the front: settles missed streak days. */
-export function openApp(state: GameState, now: number): { state: GameState; settlement: StreakSettlement } {
+/**
+ * Called when the app comes to the front: settles missed streak days and
+ * everything the island lost while nobody was looking.
+ */
+export function openApp(
+  state: GameState,
+  now: number,
+): { state: GameState; settlement: StreakSettlement; news: NewsItem[] } {
   const settlement = settleStreak(state.progress, dayIndex(now));
-  return { state: { ...state, progress: settlement.progress }, settlement };
+  const streaked = settlement.progress === state.progress ? state : { ...state, progress: settlement.progress };
+  const island = settleIsland(streaked, now);
+  const marked = syncLandmarks(island.state, settlement.streakLost, now);
+  return { state: marked.state, settlement, news: [...island.news, ...marked.news] };
 }
 
 export type PouchResult =
@@ -367,11 +388,21 @@ export function migrate(raw: unknown, now: number): GameState {
     economy: { ...fresh.economy, ...(r.economy ?? {}) },
     progress: { ...fresh.progress, ...(r.progress ?? {}) },
     nature: {
+      // Saves from before the stakes start with a clean slate: the drought counts from now.
+      ...fresh.nature,
+      ...(r.nature ?? {}),
       stock: sanitizeStock(r.nature?.stock),
       levelClaimed: r.nature?.levelClaimed ?? 1,
       discovered: { ...(r.nature?.discovered ?? {}) },
+      bonds: { ...(r.nature?.bonds ?? {}) },
+      spared: { ...(r.nature?.spared ?? {}) },
+      away: { ...(r.nature?.away ?? {}) },
+      family: { ...(r.nature?.family ?? {}) },
+      landmarks: { ...(r.nature?.landmarks ?? {}) },
+      news: Array.isArray(r.nature?.news) ? r.nature.news : [],
     },
   };
-  // Saves from before the living island get the rewards of every level they already reached.
-  return claimLevels(state).state;
+  // Saves from before the living island get the rewards of every level they
+  // already reached, and a running streak builds the landmarks it has earned.
+  return syncLandmarks(claimLevels(state).state, 0, now).state;
 }

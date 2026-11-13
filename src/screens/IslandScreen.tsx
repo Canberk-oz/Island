@@ -18,10 +18,13 @@ import { playAnimal, playSound, setAmbience, stopAmbience } from '../feel/sound'
 import { CONFIG } from '../game/config';
 import { hoursUntilFading, minutesToFullVitality, moodOf, vitalityNow, type VitalityMood } from '../game/decay';
 import { TERRAIN_INFO, getAnimal, levelProgress, residents } from '../game/nature';
+import { hashString } from '../game/rng';
+import { BOND_LABELS, bondLevel, residentContext, stumps, threats, unseenNews, waterLevel, witherMarks } from '../game/stakes';
+import { formatTime, newsText, newsTone, threatLevel, threatText } from '../ui/stakesText';
 import { RARITY_LABEL, getSpecies } from '../game/species';
 import { RARITIES, TERRAIN_KINDS, type Seed, type TerrainKind } from '../game/types';
 import { formatMinutes } from '../game/time';
-import { parseTile, plantsUntilExpansion, tileKey, unplantedSeeds } from '../game/world';
+import { parseTile, plantsUntilExpansion, tileKey, tilesInRadius, unplantedSeeds } from '../game/world';
 import { Burst } from '../render/Burst';
 import { Island, layoutIsland, screenToTile, tileToScreen } from '../render/Island';
 import { PlantIcon, PlantSheet, type SheetItem } from '../render/PlantSprite';
@@ -89,6 +92,14 @@ export function IslandScreen({
   const notify = useStore((s) => s.notify);
   const updateSettings = useStore((s) => s.updateSettings);
   const setImmersive = useStore((s) => s.setImmersive);
+  const revive = useStore((s) => s.revive);
+  const refresh = useStore((s) => s.refresh);
+  const markNewsSeen = useStore((s) => s.markNewsSeen);
+
+  // Whatever happened while the island was not on screen is settled before it is drawn.
+  useEffect(() => {
+    refresh();
+  }, [refresh, settings.timeOffsetMs]);
 
   const clock = useClockMs(true);
   const palette = useMemo(() => skyForHour(new Date(now()).getHours()), [now, settings.timeOffsetMs]);
@@ -164,7 +175,32 @@ export function IslandScreen({
   // --- wildlife ------------------------------------------------------------
   // Everyone whose habitat exists gets a track; whether they are out or hiding
   // follows the displayed vitality, so they fade away as the island wilts.
-  const habitat = useMemo(() => residents(world, game.seeds, 1), [world, game.seeds]);
+  const nature = game.nature;
+  const water = waterLevel(game, now());
+  const waterShown = Math.round(water * 20) / 20;
+  const habitat = useMemo(
+    // Animals whose water has dried up stay out of sight until it is back.
+    () => residents(world, game.seeds, 1, { ...residentContext(game, now()), water: waterShown }).filter((r) => !r.dry),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [world, game.seeds, nature.away, nature.family, waterShown],
+  );
+  const ruined = useMemo(
+    () => Object.entries(nature.landmarks).filter(([, m]) => m?.ruined).map(([k]) => k),
+    [nature.landmarks],
+  );
+  // Each session that withered in the last day leaves a twig on a free tile.
+  const marks = useMemo(() => {
+    const free = tilesInRadius(world.radius).filter((t) => !world.tiles[t.key] && !world.terrain[t.key]);
+    const out: Record<string, number> = {};
+    for (const m of witherMarks(game, now())) {
+      const open = free.filter((t) => !(t.key in out));
+      if (open.length === 0) break;
+      out[open[hashString(m.id) % open.length].key] = m.at;
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.sessions, world.radius, world.tiles, world.terrain]);
+  const markKeys = useMemo(() => Object.keys(marks), [marks]);
   const scene = useMemo(() => buildWildlife(layout, world, game.seeds, habitat, night), [layout, world, game.seeds, habitat, night]);
   const out = useMemo(
     () => habitat.filter((r) => target >= (getAnimal(r.id)?.shy ?? 1) && (night || !getAnimal(r.id)?.nocturnal)),
@@ -277,7 +313,11 @@ export function IslandScreen({
         haptic('light');
         if (def) playAnimal(def.sound);
         const id = ++serial.current;
-        setBubble({ id, text: def?.name ?? '', x: animal.x, y: animal.y });
+        const bond = nature.bonds[animal.id];
+        const lvl = bondLevel(bond?.points ?? 0);
+        const young = animal.key.endsWith(':young');
+        const who = young ? `${bond?.name ? `${bond.name}'s` : 'A'} little one` : bond?.name ?? def?.name ?? '';
+        setBubble({ id, text: lvl > 0 && !young ? `${who}\n${BOND_LABELS[lvl]} ${'💛'.repeat(lvl)}` : who, x: animal.x, y: animal.y });
         setTimeout(() => setBubble((b) => (b?.id === id ? null : b)), 1500);
         return;
       }
@@ -304,6 +344,16 @@ export function IslandScreen({
       }
 
       setTile(null);
+      if (marks[key] != null && !pick) {
+        // The twig of a session that withered: it says when. (With something
+        // in hand, planting over it is the better answer.)
+        haptic('soft');
+        playSound('crack', 0.4);
+        const id = ++serial.current;
+        setBubble({ id, text: `A session withered here\nat ${formatTime(marks[key])}`, x: sx, y: sy });
+        setTimeout(() => setBubble((b) => (b?.id === id ? null : b)), 2400);
+        return;
+      }
       if (!pick) {
         haptic('soft');
         notify('info', 'Finish a focus session to earn a seed.');
@@ -320,7 +370,7 @@ export function IslandScreen({
       playSound(pick.type === 'seed' ? 'plant' : isWater ? 'place_water' : 'place_stone');
       if (res.islandGrew) celebrateGrowth();
     },
-    [burst, celebrateGrowth, clock, layout, notify, pick, placeNature, plant, poke, scene, target, tile, world.radius, world.terrain, world.tiles],
+    [burst, celebrateGrowth, clock, layout, marks, nature.bonds, notify, pick, placeNature, plant, poke, scene, target, tile, world.radius, world.terrain, world.tiles],
   );
 
   const buyPouch = () => {
@@ -346,10 +396,37 @@ export function IslandScreen({
   const fadingIn = hoursUntilFading(world, now());
   const toFull = minutesToFullVitality(world, now());
   const planted = Object.keys(world.tiles).length;
+  const dead = useMemo(() => stumps(game).length, [game]);
+  const next = threats(game, now())[0];
+  const fresh = useMemo(() => unseenNews(nature), [nature]);
+  const [newsOpen, setNewsOpen] = useState(true);
+  // Losses are worth interrupting for; good news already had its moment after the session.
+  const showNews = newsOpen && fresh.some((n) => newsTone(n) === 'bad');
+  useEffect(() => {
+    // Good news alone needs no card: it counts as read once the island was looked at.
+    if (fresh.length > 0 && !fresh.some((n) => newsTone(n) === 'bad')) markNewsSeen();
+  }, [fresh, markNewsSeen]);
+  useEffect(() => {
+    if (!showNews) return;
+    haptic('warning');
+    playSound('wither', 0.5);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showNews]);
+  // One line per loss; a crowd of departures is told as one.
+  const lossRows = useMemo(() => {
+    const bad = fresh.filter((n) => newsTone(n) === 'bad');
+    const left = bad.filter((n) => n.kind === 'left');
+    const rest = bad.filter((n) => n.kind !== 'left').map(newsText);
+    if (left.length <= 3) return [...left.map(newsText), ...rest];
+    const names = left.slice(0, 3).map((n) => n.name ?? getAnimal(n.subject)?.name.toLowerCase() ?? n.subject);
+    return [`${left.length} animals moved away: ${names.join(', ')} and ${left.length - 3} more`, ...rest];
+  }, [fresh]);
   const moodDetail =
     world.graceUntil == null
       ? 'Finish a session to earn your first seed'
-      : fadingIn > 0
+      : next && next.kind !== 'fade'
+        ? threatText(next, now())
+        : fadingIn > 0
         ? `Stays green for ${fadingIn >= 1 ? `${Math.floor(fadingIn)}h` : 'under an hour'} without focus`
         : hiding > 0
           ? `${hiding} ${hiding === 1 ? 'animal is' : 'animals are'} hiding · ${toFull} min of focus brings them back`
@@ -361,7 +438,8 @@ export function IslandScreen({
   const level = levelProgress(game.economy.lifetimeFocusMin);
   const animalCount = out.reduce((n, r) => n + r.count, 0);
   const subtitle = [
-    planted === 0 ? 'Nothing planted yet' : `${planted} ${planted === 1 ? 'plant' : 'plants'}`,
+    planted === 0 ? 'Nothing planted yet' : `${planted - dead} ${planted - dead === 1 ? 'plant' : 'plants'}`,
+    dead > 0 ? `${dead} dead` : null,
     animalCount > 0 ? `${animalCount} ${animalCount === 1 ? 'animal' : 'animals'}` : null,
     untilGrow > 0 && planted > 0 ? `${untilGrow} more to grow` : null,
   ]
@@ -370,6 +448,7 @@ export function IslandScreen({
 
   const tileSeed = tile && world.tiles[tile] ? game.seeds[world.tiles[tile]] : null;
   const tileNature = tile ? world.terrain[tile] : undefined;
+  const tileDead = !!tileSeed && tileSeed.diedAt != null;
   const pickedSeed = pick?.type === 'seed' ? game.seeds[pick.id] : null;
   const pickedKind = pick?.type === 'nature' ? pick.kind : null;
 
@@ -390,6 +469,9 @@ export function IslandScreen({
           poke={poke}
           vitality={vitality}
           clock={clock}
+          waterLevel={waterShown}
+          ruined={ruined}
+          marks={markKeys}
           showFreeTiles={!!pick && !tile}
           selectedTile={tile}
           poppedTile={popped}
@@ -457,7 +539,13 @@ export function IslandScreen({
           <View style={styles.bar}>
             <View style={[styles.barFill, { width: `${Math.max(3, target * 100)}%`, backgroundColor: MOOD[mood].color }]} />
           </View>
-          <Txt weight="bold" size={12.5} color={colors.inkSoft} style={{ marginTop: 6 }}>
+          <Txt
+            weight="bold"
+            size={12.5}
+            color={next && next.kind !== 'fade' && threatLevel(next, now()) === 'urgent' ? '#C2381A' : colors.inkSoft}
+            style={{ marginTop: 6 }}
+            testID="mood-detail"
+          >
             {moodDetail}
           </Txt>
           <View style={styles.levelRow}>
@@ -495,13 +583,17 @@ export function IslandScreen({
         {tileSeed || tileNature ? (
           <Animated.View entering={FadeIn.duration(180)} style={styles.trayCard} testID="tile-card">
             <View style={[styles.iconWell, { backgroundColor: tileSeed ? rarityTint[tileSeed.rarity] : '#E3F2FB' }]}>
-              {tileSeed ? <PlantIcon speciesId={tileSeed.speciesId} size={52} /> : <PlantIcon terrain={tileNature} size={52} />}
+              {tileSeed ? <PlantIcon speciesId={tileSeed.speciesId} size={52} silhouette={tileDead} /> : <PlantIcon terrain={tileNature} size={52} />}
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Txt weight="black" size={17}>
                 {tileSeed ? getSpecies(tileSeed.speciesId).name : TERRAIN_INFO[tileNature!].name}
               </Txt>
-              {tileSeed ? (
+              {tileDead ? (
+                <Txt weight="bold" size={12} color="#A4512F" numberOfLines={2}>
+                  Died in the drought
+                </Txt>
+              ) : tileSeed ? (
                 <Txt weight="heavy" size={12.5} color={rarityColor[tileSeed.rarity]}>
                   {RARITY_LABEL[tileSeed.rarity]}
                 </Txt>
@@ -511,10 +603,38 @@ export function IslandScreen({
                 </Txt>
               )}
             </View>
+            {tileDead && (
+              <PressableScale
+                onPress={() => {
+                  const { x, y } = parseTile(tile!);
+                  const res = revive(x, y);
+                  if (!res.ok) {
+                    haptic('warning');
+                    notify('info', `Reviving it costs ${res.cost} coins.`);
+                    return;
+                  }
+                  haptic('success');
+                  playSound('grow');
+                  setPopped(tile);
+                  setTile(null);
+                }}
+                style={[styles.digBtn, { backgroundColor: colors.leaf, borderColor: colors.leaf, marginRight: 8, flexDirection: 'row' }]}
+                testID="revive-plant"
+                accessibilityLabel={`Revive for ${CONFIG.stakes.reviveCost[tileSeed!.rarity]} coins`}
+              >
+                <CoinIcon size={13} />
+                <Txt weight="heavy" size={13} color={colors.white} style={{ marginLeft: 4 }}>
+                  {CONFIG.stakes.reviveCost[tileSeed!.rarity]}
+                </Txt>
+              </PressableScale>
+            )}
             <PressableScale
               onPress={() => {
                 const { x, y } = parseTile(tile!);
-                if (tileSeed) {
+                if (tileDead) {
+                  // Clearing a stump frees the tile; the plant is gone.
+                  dig(x, y);
+                } else if (tileSeed) {
                   dig(x, y);
                   setPick({ type: 'seed', id: tileSeed.id });
                 } else {
@@ -528,7 +648,7 @@ export function IslandScreen({
               testID="dig-up"
             >
               <Txt weight="heavy" size={13}>
-                Move
+                {tileDead ? 'Clear' : 'Move'}
               </Txt>
             </PressableScale>
           </Animated.View>
@@ -607,7 +727,9 @@ export function IslandScreen({
           </View>
         )}
         <Txt weight="heavy" size={12.5} color={ink} center style={{ marginTop: 6, opacity: 0.8 }} testID="tray-hint">
-          {tileSeed || tileNature
+          {tileDead
+            ? 'Your next session revives one plant, or pay coins now'
+            : tileSeed || tileNature
             ? 'Move puts it back in your tray'
             : pickedSeed
               ? `Tap a free tile to plant your ${getSpecies(pickedSeed.speciesId).name}`
@@ -618,6 +740,38 @@ export function IslandScreen({
                   : 'Tap a plant to see what it is'}
         </Txt>
       </View>
+
+      {showNews && (
+        <Animated.View entering={FadeIn.duration(250)} exiting={FadeOut.duration(200)} style={styles.newsShade} testID="news-card">
+          <Animated.View entering={FadeInDown.springify().damping(13)} style={styles.newsCard}>
+            <Txt weight="black" size={21} center>
+              While you were away
+            </Txt>
+            <View style={{ marginTop: 10 }}>
+              {lossRows.map((text, i) => (
+                <View key={i} style={styles.newsRow}>
+                  <View style={[styles.moodDot, { backgroundColor: '#C2531A' }]} />
+                  <Txt weight="heavy" size={14.5} style={{ flex: 1 }}>
+                    {text}
+                  </Txt>
+                </View>
+              ))}
+            </View>
+            <Txt weight="bold" size={13} color={colors.inkSoft} center style={{ marginTop: 10 }}>
+              {`Nothing is lost for good. Every session of ${CONFIG.streak.minQualifyingMin}+ minutes revives a plant, and ${CONFIG.stakes.revivalDays} days of focus bring half of them back at once.`}
+            </Txt>
+            <Button
+              label="I'll bring them back"
+              onPress={() => {
+                setNewsOpen(false);
+                markNewsSeen();
+              }}
+              style={{ marginTop: 14 }}
+              testID="news-ok"
+            />
+          </Animated.View>
+        </Animated.View>
+      )}
 
       {pouchSeed && (
         <SeedReveal seed={pouchSeed.seed} isNew={pouchSeed.isNew} from={{ x: w / 2, y: -40 }}>
@@ -662,6 +816,19 @@ const styles = StyleSheet.create({
     borderRadius: radius.pill,
     backgroundColor: colors.leaf,
   },
+  newsShade: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(20,35,28,0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 22,
+  },
+  newsCard: { alignSelf: 'stretch', backgroundColor: colors.card, borderRadius: radius.lg, padding: 20 },
+  newsRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
   bubble: {
     position: 'absolute',
     width: 140,

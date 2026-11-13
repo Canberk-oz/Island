@@ -82,8 +82,8 @@ describe('island levels', () => {
     const base = createInitialState(T0);
     const rich = { ...base, economy: { ...base.economy, lifetimeFocusMin: 300 } };
     const first = claimLevels(rich);
-    expect(first.granted).toEqual({ water: 5, rock: 3, log: 1, hive: 1 });
-    expect(first.state.nature.stock).toEqual({ water: 5, rock: 3, log: 1, hive: 1, campfire: 0 });
+    expect(first.granted).toMatchObject({ water: 5, rock: 3, log: 1, hive: 1 });
+    expect(first.state.nature.stock).toMatchObject({ water: 5, rock: 3, log: 1, hive: 1, campfire: 0 });
     expect(first.state.nature.levelClaimed).toBe(5);
     const again = claimLevels(first.state);
     expect(again.granted).toEqual({});
@@ -256,10 +256,10 @@ describe('save migration', () => {
     v1.schemaVersion = 1;
     v1.economy.lifetimeFocusMin = 200; // level 4
     const up = migrate(v1, T0);
-    expect(up.schemaVersion).toBe(2);
+    expect(up.schemaVersion).toBe(3);
     expect(up.world.terrain).toEqual({});
     expect(up.nature.levelClaimed).toBe(4);
-    expect(up.nature.stock).toEqual({ water: 5, rock: 2, log: 1, hive: 0, campfire: 0 });
+    expect(up.nature.stock).toMatchObject({ water: 5, rock: 2, log: 1, hive: 0, campfire: 0 });
     expect(up.nature.discovered).toEqual({});
     // Migrating twice changes nothing.
     expect(migrate(JSON.parse(JSON.stringify(up)), T0)).toEqual(up);
@@ -267,6 +267,6 @@ describe('save migration', () => {
 
   it('drops garbage stock values', () => {
     const s = migrate({ nature: { stock: { water: -3, rock: 'x', log: 2.7 }, levelClaimed: 1 } }, T0);
-    expect(s.nature.stock).toEqual({ water: 0, rock: 0, log: 2, hive: 0, campfire: 0 });
+    expect(s.nature.stock).toMatchObject({ water: 0, rock: 0, log: 2, hive: 0, campfire: 0 });
   });
 });

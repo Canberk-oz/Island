@@ -4,12 +4,13 @@ import { useDerivedValue, useSharedValue, withSpring, type SharedValue } from 'r
 import { CONFIG } from '../game/config';
 import { wiltThreshold } from '../game/decay';
 import { hash01 } from '../game/rng';
+import { getSpecies } from '../game/species';
 import type { Seed, TerrainKind, World } from '../game/types';
 import { isTileInRadius, parseTile, tilesInRadius } from '../game/world';
 import { motion } from '../ui/theme';
 import { PlantBody, PlantGlow } from './PlantSprite';
 import { NO_POKE, Wildlife, type Poke } from './Wildlife';
-import { terrainSprite } from './creatures';
+import { remainsSprite, terrainSprite } from './creatures';
 import { plantSprite } from './plants';
 import { EMPTY_SCENE, type WildlifeScene } from './wildlife';
 
@@ -143,20 +144,25 @@ function IslandWater({
   terrain,
   vitality,
   clock,
+  level,
 }: {
   layout: IslandLayout;
   radius: number;
   terrain: Record<string, TerrainKind>;
   vitality: SharedValue<number>;
   clock: SharedValue<number>;
+  /** How full the water is: 1 = full, 0 = dried to mud. */
+  level: number;
 }) {
   const water = useMemo(() => buildWater(l, radius, terrain), [l, radius, terrain]);
-  const sink = l.th * 0.16;
+  // The surface sinks as the water runs low.
+  const sink = l.th * (0.16 + 0.2 * (1 - level));
+  const wet = Math.min(1, level / 0.3);
 
   // Clear blue while the island is alive, murky when it is neglected.
   const deep = useDerivedValue(() => interpolateColors(vitality.value, [0, 1], ['#6F7A5E', '#2F8FCF']));
   const top = useDerivedValue(() => interpolateColors(vitality.value, [0, 1], ['#8E9A78', '#56BDEE']));
-  const shimmerOpacity = useDerivedValue(() => 0.15 + 0.5 * vitality.value);
+  const shimmerOpacity = useDerivedValue(() => (0.15 + 0.5 * vitality.value) * wet);
   const surfaceShift = useMemo(() => [{ translateY: sink }], [sink]);
 
   const shimmer = useDerivedValue(() => {
@@ -205,9 +211,11 @@ function IslandWater({
         <Group transform={[{ translateY: sink + l.th * 0.07 }]}>
           <Path path={water.surface} color={top} opacity={0.75} />
         </Group>
+        {/* Cracked mud shows through as the water dries up. */}
+        {level < 1 && <Path path={water.surface} color="#7A6248" opacity={(1 - level) * 0.92} />}
         <Path path={shimmer} color="#FFFFFF" opacity={shimmerOpacity} />
       </Group>
-      {water.streams.length > 0 && (
+      {water.streams.length > 0 && level > 0.45 && (
         <Group>
           <Path path={water.falls} color={top} opacity={0.92} />
           <Path path={streaks} color="#FFFFFF" opacity={0.6} />
@@ -223,6 +231,7 @@ function IslandWater({
 /** A rock, log, beehive or campfire standing on a tile. */
 function IslandObject({
   kind,
+  ruined,
   unit,
   sx,
   sy,
@@ -230,13 +239,14 @@ function IslandObject({
   popIn,
 }: {
   kind: TerrainKind;
+  ruined: boolean;
   unit: number;
   sx: number;
   sy: number;
   clock: SharedValue<number>;
   popIn: boolean;
 }) {
-  const sprite = useMemo(() => terrainSprite(kind, unit), [kind, unit]);
+  const sprite = useMemo(() => terrainSprite(kind, unit, ruined), [kind, unit, ruined]);
   const pop = useSharedValue(popIn ? 0 : 1);
   useEffect(() => {
     if (popIn) pop.value = withSpring(1, motion.pop);
@@ -284,16 +294,24 @@ function IslandPlant({ speciesId, unit, sx, sy, threshold, phase, vitality, cloc
   }, [popIn, pop]);
 
   const transform = useDerivedValue(() => {
-    const w = Math.min(1, Math.max(0, (threshold - vitality.value) / BAND));
+    const decline = (threshold - vitality.value) / BAND;
+    const w = Math.min(1, Math.max(0, decline));
+    // Past wilted the plant goes bare: it sags further and thins out.
+    const bare = vitality.value <= 0.001 ? 1 : Math.min(1, Math.max(0, decline - 1.4));
     const sway = Math.sin(clock.value / 900 + phase * 6.28) * 0.04 * (1 - w * 0.8);
-    const lean = (phase > 0.5 ? 1 : -1) * w * 0.28;
+    const lean = (phase > 0.5 ? 1 : -1) * (w * 0.28 + bare * 0.12);
     return [
       { translateX: sx },
       { translateY: sy },
       { rotate: sway + lean },
-      { scaleX: pop.value * (1 + w * 0.04) },
-      { scaleY: pop.value * (1 - w * 0.2) },
+      { scaleX: pop.value * (1 + w * 0.04 - bare * 0.14) },
+      { scaleY: pop.value * (1 - w * 0.2 - bare * 0.14) },
     ];
+  });
+  const bodyOpacity = useDerivedValue(() => {
+    const decline = (threshold - vitality.value) / BAND;
+    const bare = vitality.value <= 0.001 ? 1 : Math.min(1, Math.max(0, decline - 1.4));
+    return 1 - bare * 0.3;
   });
   const wiltOpacity = useDerivedValue(() => Math.min(1, Math.max(0, (threshold - vitality.value) / BAND)));
   const glowOpacity = useDerivedValue(() => 1 - Math.min(1, Math.max(0, (threshold - vitality.value) / BAND)));
@@ -308,7 +326,7 @@ function IslandPlant({ speciesId, unit, sx, sy, threshold, phase, vitality, cloc
         color="#12301F"
         opacity={0.16}
       />
-      <Group transform={transform}>
+      <Group transform={transform} opacity={bodyOpacity}>
         <Group opacity={glowOpacity}>
           <PlantGlow parts={sprite.parts} />
         </Group>
@@ -317,6 +335,17 @@ function IslandPlant({ speciesId, unit, sx, sy, threshold, phase, vitality, cloc
           <PlantBody parts={sprite.parts} wiltedLook />
         </Group>
       </Group>
+    </Group>
+  );
+}
+
+/** What is left of a dead plant, or the twig of a withered session. */
+function IslandRemains({ kind, unit, sx, sy }: { kind: 'stump' | 'stalks' | 'twig'; unit: number; sx: number; sy: number }) {
+  const sprite = useMemo(() => remainsSprite(kind, unit), [kind, unit]);
+  return (
+    <Group zIndex={sy} transform={[{ translateX: sx }, { translateY: sy }]}>
+      <Oval x={-sprite.width * 0.5} y={-sprite.width * 0.1} width={sprite.width} height={sprite.width * 0.24} color="#12301F" opacity={0.14} />
+      <PlantBody parts={sprite.parts} />
     </Group>
   );
 }
@@ -341,7 +370,15 @@ interface IslandProps {
   scale?: SharedValue<number>;
   /** Disable the idle bobbing (used for the share picture). */
   still?: boolean;
+  /** How full ponds and lakes are (1 = full, 0 = mud). */
+  waterLevel?: number;
+  /** Landmarks that lie in ruins. */
+  ruined?: readonly string[];
+  /** Tiles marked by a withered session (a dead twig). */
+  marks?: readonly string[];
 }
+
+const NO_STRINGS: readonly string[] = [];
 
 /** The floating island: rock, earth, water, plants and wildlife. Must be used inside a Canvas. */
 export function Island({
@@ -357,6 +394,9 @@ export function Island({
   poppedTile = null,
   scale,
   still = false,
+  waterLevel = 1,
+  ruined = NO_STRINGS,
+  marks = NO_STRINGS,
 }: IslandProps) {
   const ground = useMemo(() => buildGround(l, world.radius), [l, world.radius]);
   const ownPoke = useSharedValue<Poke>(NO_POKE);
@@ -401,6 +441,8 @@ export function Island({
           const { sx, sy } = tileToScreen(l, t.x, t.y);
           return {
             key: t.key,
+            dead: seed.diedAt != null,
+            tall: ['tree', 'pine'].includes(getSpecies(seed.speciesId).kind),
             speciesId: seed.speciesId,
             sx,
             sy: sy + l.th * 0.08,
@@ -422,6 +464,18 @@ export function Island({
     [ground, terrain, l],
   );
 
+  const twigs = useMemo(
+    () =>
+      marks
+        .filter((key) => !world.tiles[key] && !terrain[key])
+        .map((key) => {
+          const { x, y } = parseTile(key);
+          const { sx, sy } = tileToScreen(l, x, y);
+          return { key, sx, sy: sy + l.th * 0.08 };
+        }),
+    [marks, world.tiles, terrain, l],
+  );
+
   // Plants, objects and animals are siblings in this group: Skia sorts them by
   // zIndex (their ground position on screen) every frame, so an animal passes
   // behind the trees in front of it.
@@ -434,10 +488,16 @@ export function Island({
       <Path path={ground.lip} color={lipColor} />
       <Path path={ground.topA} color={grassA} />
       <Path path={ground.topB} color={grassB} />
-      <IslandWater layout={l} radius={world.radius} terrain={terrain} vitality={vitality} clock={clock} />
+      <IslandWater layout={l} radius={world.radius} terrain={terrain} vitality={vitality} clock={clock} level={waterLevel} />
       {showFreeTiles && <Path path={free} color="#FFFFFF" opacity={freeOpacity} />}
       {selected && <Path path={selected} color="#FFFFFF" style="stroke" strokeWidth={3} strokeJoin="round" opacity={0.95} />}
-      {plants.map((p) => (
+      {twigs.map((t) => (
+        <IslandRemains key={`twig:${t.key}`} kind="twig" unit={l.unit} sx={t.sx} sy={t.sy} />
+      ))}
+      {plants.map((p) =>
+        p.dead ? (
+          <IslandRemains key={`${p.key}:dead`} kind={p.tall ? 'stump' : 'stalks'} unit={l.unit} sx={p.sx} sy={p.sy} />
+        ) : (
         <IslandPlant
           key={`${p.key}:${p.speciesId}`}
           speciesId={p.speciesId}
@@ -450,9 +510,10 @@ export function Island({
           clock={clock}
           popIn={poppedTile === p.key}
         />
-      ))}
+        ),
+      )}
       {objects.map((o) => (
-        <IslandObject key={`${o.key}:${o.kind}`} kind={o.kind} unit={l.unit} sx={o.sx} sy={o.sy} clock={clock} popIn={poppedTile === o.key} />
+        <IslandObject key={`${o.key}:${o.kind}`} kind={o.kind} ruined={ruined.includes(o.kind)} unit={l.unit} sx={o.sx} sy={o.sy} clock={clock} popIn={poppedTile === o.key} />
       ))}
       <Wildlife scene={scene} clock={clock} vitality={vitality} poke={poke ?? ownPoke} tileW={l.tw} />
     </Group>

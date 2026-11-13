@@ -55,11 +55,26 @@ export function levelProgress(lifetimeMin: number) {
 }
 
 export function emptyStock(): Record<TerrainKind, number> {
-  return { water: 0, rock: 0, log: 0, hive: 0, campfire: 0 };
+  return { water: 0, rock: 0, log: 0, hive: 0, campfire: 0, arch: 0, windmill: 0, lighthouse: 0 };
 }
 
-export function createNature(): Nature {
-  return { stock: emptyStock(), levelClaimed: 1, discovered: {} };
+export function createNature(now = 0): Nature {
+  return {
+    stock: emptyStock(),
+    levelClaimed: 1,
+    discovered: {},
+    drought: 0,
+    spared: {},
+    settledAt: now,
+    bonds: {},
+    away: {},
+    family: {},
+    lastBirthDay: null,
+    landmarks: {},
+    revival: null,
+    news: [],
+    newsSeenAt: now,
+  };
 }
 
 /** Hand out the rewards of every level reached but not yet claimed. */
@@ -83,6 +98,9 @@ export const TERRAIN_INFO: Record<TerrainKind, { name: string; blurb: string }> 
   log: { name: 'Hollow log', blurb: 'A home for small, shy creatures.' },
   hive: { name: 'Beehive', blurb: 'Bees come when there are flowers to visit.' },
   campfire: { name: 'Campfire', blurb: 'A warm glow for long evenings.' },
+  arch: { name: 'Stone arch', blurb: 'Built by a 7-day streak. It crumbles if the streak breaks.' },
+  windmill: { name: 'Windmill', blurb: 'Built by a 30-day streak. It crumbles if the streak breaks.' },
+  lighthouse: { name: 'Lighthouse', blurb: 'Built by a 100-day streak. It crumbles if the streak breaks.' },
 };
 
 // ---------------------------------------------------------------------------
@@ -212,7 +230,8 @@ export function habitatOf(world: World, seeds: Record<string, Seed>): Habitat {
   let plants = 0;
   for (const seedId of Object.values(world.tiles)) {
     const seed = seeds[seedId];
-    if (!seed) continue;
+    // A stump is not a plant any more: it feeds and shelters nobody.
+    if (!seed || seed.diedAt != null) continue;
     plants++;
     const k = getSpecies(seed.speciesId).kind;
     kinds[k] = (kinds[k] ?? 0) + 1;
@@ -261,6 +280,8 @@ export interface AnimalDef {
   /** How many live on the island (0 = the habitat does not suit it). */
   population: (h: Habitat) => number;
   sound: string;
+  /** Water level (0..1) it needs: below it, it hides until the water is back. */
+  needsWater?: number;
 }
 
 const cap = (n: number, max: number) => Math.max(0, Math.min(max, Math.floor(n)));
@@ -295,6 +316,7 @@ export const ANIMALS: readonly AnimalDef[] = [
     shy: 0.3,
     population: (h) => (h.water >= 1 ? cap(1 + h.ponds / 2, 2) : 0),
     sound: 'ribbit',
+    needsWater: 0.2,
   },
   {
     id: 'rabbit',
@@ -325,6 +347,7 @@ export const ANIMALS: readonly AnimalDef[] = [
     shy: 0.4,
     population: (h) => (h.biggestWater >= 2 ? cap(h.water / 3 + 1, 2) : 0),
     sound: 'quack',
+    needsWater: 0.35,
   },
   {
     id: 'bee',
@@ -355,6 +378,7 @@ export const ANIMALS: readonly AnimalDef[] = [
     shy: 0.25,
     population: (h) => (h.lakes >= 1 ? cap(h.biggestWater / 2, 3) : 0),
     sound: 'splash',
+    needsWater: 0.5,
   },
   {
     id: 'deer',
@@ -408,18 +432,44 @@ export function getAnimal(id: string): AnimalDef | undefined {
 
 export interface Resident {
   id: string;
+  /** Adults. */
   count: number;
-  /** False while it hides because the island is wilting. */
+  /** False while it hides because the island is wilting or its water is gone. */
   present: boolean;
+  /** It has a young one following it around. */
+  young: boolean;
+  /** Its water has dried up. */
+  dry: boolean;
+}
+
+/** What the habitat alone cannot tell: who moved away, who has a family, how much water is left. */
+export interface ResidentContext {
+  away?: Record<string, unknown>;
+  /** Animals with a young one. */
+  young?: readonly string[];
+  /** Animals whose young one has grown up (one more adult). */
+  grown?: readonly string[];
+  /** Water level 0..1 (1 when omitted). */
+  water?: number;
 }
 
 /** Every animal whose habitat is on the island, and whether it is out right now. */
-export function residents(world: World, seeds: Record<string, Seed>, vitality: number): Resident[] {
+export function residents(world: World, seeds: Record<string, Seed>, vitality: number, ctx: ResidentContext = {}): Resident[] {
   const h = habitatOf(world, seeds);
+  const water = ctx.water ?? 1;
   const out: Resident[] = [];
   for (const a of ANIMALS) {
+    if (ctx.away && ctx.away[a.id]) continue;
     const count = a.population(h);
-    if (count > 0) out.push({ id: a.id, count, present: vitality >= a.shy });
+    if (count <= 0) continue;
+    const dry = a.needsWater != null && water < a.needsWater;
+    out.push({
+      id: a.id,
+      count: count + (ctx.grown?.includes(a.id) ? 1 : 0),
+      present: vitality >= a.shy && !dry,
+      young: !!ctx.young?.includes(a.id),
+      dry,
+    });
   }
   return out;
 }
@@ -430,8 +480,9 @@ export function discoverWildlife(
   vitality: number,
   now: number,
   night = true,
+  ctx: ResidentContext = {},
 ): { state: GameState; arrived: string[] } {
-  const arrived = residents(state.world, state.seeds, vitality)
+  const arrived = residents(state.world, state.seeds, vitality, ctx)
     // Night animals are only met at night: they cannot be seen during the day.
     .filter((r) => r.present && state.nature.discovered[r.id] == null && (night || !ANIMAL_BY_ID[r.id].nocturnal))
     .map((r) => r.id);

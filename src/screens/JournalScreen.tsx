@@ -5,7 +5,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { haptic } from '../feel/haptics';
 import { setUpNotifications } from '../feel/notify';
 import { CONFIG } from '../game/config';
-import { ANIMALS, levelProgress } from '../game/nature';
+import { ANIMALS, TERRAIN_INFO, levelProgress } from '../game/nature';
+import { BOND_LABELS, bondLevel, daysToNextBond, landmarkRebuildStreak, stumps } from '../game/stakes';
+import { LANDMARK_KINDS } from '../game/types';
+import { IslandStatus } from '../ui/IslandStatus';
+import { formatAgo, newsText, newsTone } from '../ui/stakesText';
 import { RARITY_LABEL, SPECIES, getSpecies } from '../game/species';
 import { ringProgress, streakAtRisk } from '../game/streak';
 import { dayIndex, dayKey, formatMinutes, weekStart } from '../game/time';
@@ -53,6 +57,7 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
   const devAddCoins = useStore((s) => s.devAddCoins);
   const devAddFocus = useStore((s) => s.devAddFocus);
   const devSkipTime = useStore((s) => s.devSkipTime);
+  const devAddStreak = useStore((s) => s.devAddStreak);
   const resetAll = useStore((s) => s.resetAll);
   const [confirmReset, setConfirmReset] = useState(false);
 
@@ -102,7 +107,7 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
   // Wildlife: three wider cards per row, each with room for a hint.
   const wildCell = (w - 36 - 2 * GAP) / 3;
   const wildIcon = 46;
-  const wildH = wildIcon + 74;
+  const wildH = wildIcon + 84;
   const met = ANIMALS.filter((a) => game.nature.discovered[a.id] != null).length;
   const wildItems = useMemo(
     () =>
@@ -120,6 +125,12 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
   const wildGridH = Math.ceil(ANIMALS.length / 3) * (wildH + GAP) - GAP;
   const level = levelProgress(economy.lifetimeFocusMin);
   const SWARM_ICON: Record<string, string> = { butterfly: '🦋', bee: '🐝', firefly: '✨' };
+  const nature = game.nature;
+  const revival = nature.revival;
+  const lostAnimals = Object.keys(nature.away).length;
+  const lostPlants = useMemo(() => stumps(game).length, [game]);
+  const diary = useMemo(() => [...nature.news].reverse().slice(0, 8), [nature.news]);
+  const landmarkItems = LANDMARK_KINDS.map((k, i) => ({ terrain: k, cx: 26, top: i * 58 + 4, size: 44, silhouette: !nature.landmarks[k] }));
 
   return (
     <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.paper }]} testID="journal-screen">
@@ -130,6 +141,34 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
         <Txt weight="black" size={30}>
           Journal
         </Txt>
+
+        <IslandStatus style={{ marginTop: 12, backgroundColor: colors.card, borderWidth: 1, borderColor: colors.cardEdge }} />
+
+        {(revival || lostAnimals > 0 || lostPlants > 0) && (
+          <Card style={{ marginTop: 12, backgroundColor: '#FFF3E0' }}>
+            <Txt weight="black" size={16} testID="revival-title">
+              {revival ? `Revival · day ${revival.days} of ${CONFIG.stakes.revivalDays}` : 'Your island has lost something'}
+            </Txt>
+            <Txt weight="bold" size={13} color={colors.inkSoft} style={{ marginTop: 4 }}>
+              {[
+                lostAnimals > 0 ? `${lostAnimals} ${lostAnimals === 1 ? 'animal has' : 'animals have'} moved away` : null,
+                lostPlants > 0 ? `${lostPlants} ${lostPlants === 1 ? 'plant has' : 'plants have'} died` : null,
+              ]
+                .filter(Boolean)
+                .join(' · ')}
+            </Txt>
+            {revival && (
+              <View style={[styles.meter, { backgroundColor: '#FBE3C4' }]}>
+                <View style={[styles.meterFill, { backgroundColor: '#E08A2B', width: `${(revival.days / CONFIG.stakes.revivalDays) * 100}%` }]} />
+              </View>
+            )}
+            <Txt weight="bold" size={12.5} color={colors.inkSoft} style={{ marginTop: 8 }}>
+              {revival
+                ? `Focus ${CONFIG.streak.minQualifyingMin}+ minutes on ${CONFIG.stakes.revivalDays - revival.days} more ${CONFIG.stakes.revivalDays - revival.days === 1 ? 'day' : 'days'} and half of what you lost comes back at once.`
+                : `Every session of ${CONFIG.streak.minQualifyingMin}+ minutes revives one plant. Animals return after ${CONFIG.stakes.returnDays} days of focus. Your next session starts a revival that brings half of them back in ${CONFIG.stakes.revivalDays} days.`}
+            </Txt>
+          </Card>
+        )}
 
         <Animated.View entering={FadeInDown.duration(350)}>
           <Card style={{ marginTop: 14 }}>
@@ -288,26 +327,109 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
         <View style={styles.grid}>
           {ANIMALS.map((a) => {
             const found = game.nature.discovered[a.id] != null;
+            const away = nature.away[a.id];
+            const bond = nature.bonds[a.id];
+            const lvl = bondLevel(bond?.points ?? 0);
+            const toNext = daysToNextBond(bond?.points ?? 0);
+            const title = !found ? '???' : bond?.name ? `${bond.name}` : a.name;
+            const detail = !found
+              ? a.hint
+              : away
+                ? `Moved away. ${CONFIG.stakes.returnDays - away.days} focus days to return`
+                : lvl > 0
+                  ? `${BOND_LABELS[lvl]}${nature.family[a.id] != null ? ' · family' : ''}${toNext > 0 ? ` · ${toNext}d to ${BOND_LABELS[lvl + 1].toLowerCase()}` : ''}`
+                  : a.nocturnal
+                    ? 'Comes out at night'
+                    : a.blurb;
             return (
               <View
                 key={a.id}
-                style={[styles.cell, { width: wildCell, height: wildH, backgroundColor: found ? '#EAF6EC' : '#F1ECE0', borderColor: found ? colors.leaf : 'transparent' }]}
+                style={[
+                  styles.cell,
+                  {
+                    width: wildCell,
+                    height: wildH,
+                    backgroundColor: away ? '#F7E4DC' : found ? '#EAF6EC' : '#F1ECE0',
+                    borderColor: away ? '#D98A6C' : found ? (lvl >= 2 ? colors.coin : colors.leaf) : 'transparent',
+                  },
+                ]}
                 testID={`wild-${a.id}`}
               >
-                <View style={[styles.center, { height: wildIcon }]}>
+                <View style={[styles.center, { height: wildIcon, opacity: away ? 0.35 : 1 }]}>
                   {!hasAnimalSprite(a.id) && <Txt size={26} style={{ opacity: found ? 1 : 0.25 }}>{SWARM_ICON[a.id] ?? '🐾'}</Txt>}
                 </View>
                 <Txt weight="heavy" size={12.5} center numberOfLines={1} style={{ marginTop: 3 }} color={found ? colors.ink : colors.inkFaint}>
-                  {found ? a.name : '???'}
+                  {title}
                 </Txt>
-                <Txt weight="bold" size={10.5} center numberOfLines={2} color={found ? colors.inkSoft : colors.inkFaint} style={{ marginTop: 1 }}>
-                  {found ? (a.nocturnal ? 'Comes out at night' : a.blurb) : a.hint}
+                {found && lvl > 0 && !away && (
+                  <Txt size={9} center style={{ marginTop: 1 }} testID={`bond-${a.id}`}>
+                    {'💛'.repeat(lvl)}
+                  </Txt>
+                )}
+                <Txt weight="bold" size={10.5} center numberOfLines={2} color={away ? '#A4512F' : found ? colors.inkSoft : colors.inkFaint} style={{ marginTop: 1 }}>
+                  {detail}
                 </Txt>
               </View>
             );
           })}
           <PlantSheet width={w - 36} height={wildGridH} items={wildItems} style={{ position: 'absolute', left: 0, top: 0 }} />
         </View>
+
+        <SectionTitle>Streak landmarks</SectionTitle>
+        <Card style={{ paddingVertical: 8 }}>
+          {LANDMARK_KINDS.map((k) => {
+            const mark = nature.landmarks[k];
+            const need = CONFIG.stakes.landmarkStreaks[k];
+            const status = !mark
+              ? `Built by a ${need}-day streak · ${Math.max(1, need - progress.streak)} to go`
+              : mark.ruined
+                ? `In ruins. Rebuilt at a ${landmarkRebuildStreak(k)}-day streak`
+                : 'Standing. It falls to ruins if your streak breaks';
+            return (
+              <View key={k} style={{ height: 58, paddingLeft: 60, justifyContent: 'center' }} testID={`landmark-${k}`}>
+                <Txt weight="heavy" size={14.5} color={mark ? colors.ink : colors.inkFaint}>
+                  {TERRAIN_INFO[k].name}
+                </Txt>
+                <Txt weight="bold" size={12} color={mark?.ruined ? '#A4512F' : colors.inkSoft}>
+                  {status}
+                </Txt>
+              </View>
+            );
+          })}
+          <PlantSheet width={56} height={LANDMARK_KINDS.length * 58} items={landmarkItems} style={{ position: 'absolute', left: 12, top: 8 }} />
+        </Card>
+
+        <SectionTitle>Island diary</SectionTitle>
+        <Card style={{ paddingVertical: 6 }}>
+          {diary.length === 0 ? (
+            <Txt weight="bold" size={14} color={colors.inkFaint} style={{ paddingVertical: 12 }}>
+              Arrivals, friendships and losses are written down here.
+            </Txt>
+          ) : (
+            diary.map((n, i) => {
+              const tone = newsTone(n);
+              return (
+                <View key={`${n.at}:${n.kind}:${n.subject}:${i}`} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 8 }} testID="diary-row">
+                  <View
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 4,
+                      marginRight: 10,
+                      backgroundColor: tone === 'bad' ? '#C2531A' : tone === 'good' ? colors.leaf : colors.coin,
+                    }}
+                  />
+                  <Txt weight="heavy" size={13.5} style={{ flex: 1 }} numberOfLines={2}>
+                    {newsText(n)}
+                  </Txt>
+                  <Txt weight="bold" size={11.5} color={colors.inkFaint} style={{ marginLeft: 8 }}>
+                    {formatAgo(n.at, now())}
+                  </Txt>
+                </View>
+              );
+            })
+          )}
+        </Card>
 
         <SectionTitle>Recent sessions</SectionTitle>
         <Card style={{ paddingVertical: 6 }}>
@@ -377,6 +499,10 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
             <View style={styles.devRow}>
               <Button label="+100 coins" tone="ghost" onPress={() => devAddCoins(100)} style={styles.devBtn} testID="dev-coins" feel="light" />
               <Button label="+2h focus" tone="ghost" onPress={() => devAddFocus(120)} style={styles.devBtn} testID="dev-focus" feel="light" />
+            </View>
+            <View style={styles.devRow}>
+              <Button label="+7 streak days" tone="ghost" onPress={() => devAddStreak(7)} style={styles.devBtn} testID="dev-streak" feel="light" />
+              <Button label="+3 days" tone="ghost" onPress={() => devSkipTime(72)} style={styles.devBtn} testID="dev-skip-72" feel="light" />
             </View>
             <View style={styles.devRow}>
               <Button

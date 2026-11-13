@@ -38,6 +38,9 @@ import type { CompletionSummary, WitherSummary } from '../game/types';
 import { Sapling, saplingTip, wiltMatrix } from '../render/Sapling';
 import { useClockMs } from '../render/clock';
 import { Hill, Sky } from '../render/scene';
+import { IslandStatus } from '../ui/IslandStatus';
+import { newsText } from '../ui/stakesText';
+import type { NewsItem } from '../game/types';
 import { useStore } from '../store/store';
 import { Ring } from '../ui/Ring';
 import { Button, CoinIcon, Pill, PressableScale, Txt } from '../ui/kit';
@@ -411,6 +414,7 @@ function IdleControls({ dark, top }: { dark: boolean; top: number }) {
         </View>
         <Pill icon={<CoinIcon size={18} />} value={coins} />
       </View>
+      <IslandStatus compact style={{ marginHorizontal: 18, marginTop: 8 }} />
       {atRisk && (
         <Txt size={13} color={dark ? '#FFD9C2' : '#C2531A'} center style={{ marginTop: 6 }}>
           {`Focus ${CONFIG.streak.minQualifyingMin}+ minutes today to keep your streak`}
@@ -756,6 +760,21 @@ function CompletionRewards({
   }, [leveledUp]);
 
   const rows: { icon: React.ReactNode; text: string }[] = [];
+  // What the session won back on the island comes first: it is the reason to focus.
+  const NEWS_ICON: Partial<Record<NewsItem['kind'], string>> = {
+    questDone: '🌅',
+    returned: '🐾',
+    born: '🐣',
+    befriended: '💛',
+    landmark: '🏛️',
+    rebuilt: '🏛️',
+    revived: '🌱',
+    questStarted: '🌅',
+  };
+  for (const kind of Object.keys(NEWS_ICON) as NewsItem['kind'][]) {
+    const item = summary.news.find((n) => n.kind === kind);
+    if (item) rows.push({ icon: <Txt size={16}>{NEWS_ICON[kind]}</Txt>, text: newsText(item) });
+  }
   if (leveledUp) {
     const gift = grantText(summary.granted);
     rows.push({ icon: <Txt size={16}>🏝️</Txt>, text: `Island level ${summary.levelAfter}!${gift ? ` New to place: ${gift}` : ''}` });
@@ -774,7 +793,7 @@ function CompletionRewards({
 
   return (
     <View>
-      {rows.slice(0, 4).map((r, i) => (
+      {rows.slice(0, 5).map((r, i) => (
         <RewardRow key={i} icon={r.icon} text={r.text} delay={650 + i * 130} />
       ))}
       <Animated.View entering={FadeInDown.delay(1250).springify().damping(12)} style={{ marginTop: 14 }}>
@@ -814,7 +833,7 @@ function WitherCard({ summary, top, onDone }: { summary: WitherSummary; top: num
         </View>
       )}
       <Txt weight="regular" size={14} color={colors.inkFaint} center style={{ marginTop: 10 }}>
-        Your island is untouched. The next seed is waiting.
+        A dead twig marks it on your island until tomorrow.
       </Txt>
       <Button label="Try again" onPress={onDone} testID="wither-done" style={{ marginTop: 16 }} />
     </Animated.View>

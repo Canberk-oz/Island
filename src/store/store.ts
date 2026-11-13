@@ -15,6 +15,8 @@ import {
 import type { CompletionSummary, GameState, Seed, WitherSummary } from '../game/types';
 import { claimLevels, discoverWildlife, placeTerrain, removeTerrain } from '../game/nature';
 import { vitalityNow } from '../game/decay';
+import { residentContext, revivePlant, syncLandmarks } from '../game/stakes';
+import { dayIndex } from '../game/time';
 import type { TerrainKind } from '../game/types';
 import { digUp, growIsland, plantSeed } from '../game/world';
 
@@ -78,6 +80,12 @@ interface Store {
   dig: (x: number, y: number) => void;
   /** Place a nature piece from the stock on a tile. */
   placeNature: (kind: TerrainKind, x: number, y: number) => { ok: boolean; islandGrew: boolean };
+  /** Pay coins to bring the stump on a tile back to life. */
+  revive: (x: number, y: number) => { ok: boolean; cost: number };
+  /** Bring streak and island up to date with the clock (also done whenever the app comes to the front). */
+  refresh: () => void;
+  /** The island diary was shown: nothing in it is new any more. */
+  markNewsSeen: () => void;
   /** Pick a nature piece back up. */
   liftNature: (x: number, y: number) => void;
   /** Note animals that moved in for the first time. Returns their ids. */
@@ -91,6 +99,8 @@ interface Store {
   /** Developer: add lifetime focus minutes (raises the island level). */
   devAddFocus: (minutes: number) => void;
   devSkipTime: (hours: number) => void;
+  /** Developer: lengthen the streak (builds landmarks, lets animals have young). */
+  devAddStreak: (days: number) => void;
   resetAll: () => void;
 }
 
@@ -121,6 +131,7 @@ export const useStore = create<Store>((set, get) => {
       case 'completed':
         set({ game: res.state, result: { kind: 'completed', summary: res.summary } });
         log('session:completed', `seed=${res.summary.seed.speciesId} rarity=${res.summary.seed.rarity}`);
+        for (const n of res.summary.news) log(`island:${n.kind}`, n.subject);
         return 'completed' as const;
       case 'withered':
         set({ game: res.state, result: { kind: 'withered', summary: res.summary } });
@@ -131,8 +142,9 @@ export const useStore = create<Store>((set, get) => {
 
   /** Settle missed streak days and tell the player what happened. */
   const settle = () => {
-    const { state, settlement } = openApp(get().game, now());
+    const { state, settlement, news } = openApp(get().game, now());
     if (state !== get().game) set({ game: state });
+    for (const n of news) log(`island:${n.kind}`, `${n.subject}${n.count ? ` x${n.count}` : ''}`);
     if (settlement.freezesUsed > 0) {
       const n = settlement.freezesUsed;
       get().notify('info', `${n === 1 ? 'A freeze' : `${n} freezes`} kept your ${state.progress.streak}-day streak safe.`);
@@ -217,6 +229,23 @@ export const useStore = create<Store>((set, get) => {
 
     dig: (x, y) => set({ game: digUp(get().game, x, y) }),
 
+    revive: (x, y) => {
+      const res = revivePlant(get().game, `${x},${y}`, now());
+      if (!res.ok) return { ok: false, cost: res.cost };
+      set({ game: res.state });
+      log('island:revived', `tile=${x},${y}`);
+      return { ok: true, cost: res.cost };
+    },
+
+    refresh: () => settle(),
+
+    markNewsSeen: () => {
+      const game = get().game;
+      const last = game.nature.news[game.nature.news.length - 1];
+      if (!last || last.at <= game.nature.newsSeenAt) return;
+      set({ game: { ...game, nature: { ...game.nature, newsSeenAt: Math.max(now(), last.at) } } });
+    },
+
     placeNature: (kind, x, y) => {
       const res = placeTerrain(get().game, kind, x, y, growIsland);
       if (!res.ok) return { ok: false, islandGrew: false };
@@ -229,7 +258,7 @@ export const useStore = create<Store>((set, get) => {
 
     discover: (night) => {
       const game = get().game;
-      const res = discoverWildlife(game, vitalityNow(game.world, now()), now(), night);
+      const res = discoverWildlife(game, vitalityNow(game.world, now()), now(), night, residentContext(game, now()));
       if (res.arrived.length === 0) return [];
       set({ game: res.state });
       log('island:arrived', res.arrived.join(','));
@@ -265,6 +294,13 @@ export const useStore = create<Store>((set, get) => {
       const s = get().settings;
       set({ settings: { ...s, timeOffsetMs: s.timeOffsetMs + hours * 3_600_000 } });
       settle();
+    },
+
+    devAddStreak: (days) => {
+      const game = get().game;
+      const streak = game.progress.streak + days;
+      const progress = { ...game.progress, streak, bestStreak: Math.max(game.progress.bestStreak, streak), lastStreakDay: dayIndex(now()) };
+      set({ game: syncLandmarks({ ...game, progress }, 0, now()).state });
     },
 
     resetAll: () => {

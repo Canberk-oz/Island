@@ -377,9 +377,167 @@ const TERRAIN: Record<TerrainKind, Draw> = {
       ],
     };
   },
+  arch: (u) => {
+    const stone = pb()
+      .moveTo(-0.3 * u, 0)
+      .lineTo(-0.3 * u, -0.42 * u)
+      .cubicTo(-0.3 * u, -0.7 * u, 0.3 * u, -0.7 * u, 0.3 * u, -0.42 * u)
+      .lineTo(0.3 * u, 0)
+      .lineTo(0.15 * u, 0)
+      .lineTo(0.15 * u, -0.38 * u)
+      .cubicTo(0.15 * u, -0.52 * u, -0.15 * u, -0.52 * u, -0.15 * u, -0.38 * u)
+      .lineTo(-0.15 * u, 0)
+      .close()
+      .build();
+    const joints = pb()
+      .moveTo(-0.3 * u, -0.14 * u).lineTo(-0.15 * u, -0.14 * u)
+      .moveTo(-0.3 * u, -0.3 * u).lineTo(-0.15 * u, -0.3 * u)
+      .moveTo(0.3 * u, -0.14 * u).lineTo(0.15 * u, -0.14 * u)
+      .moveTo(0.3 * u, -0.3 * u).lineTo(0.15 * u, -0.3 * u)
+      .moveTo(0, -0.63 * u).lineTo(0, -0.49 * u)
+      .build();
+    return {
+      parts: [
+        part(stone, '#A9AFB5'),
+        part(poly([[-0.3 * u, 0], [-0.3 * u, -0.42 * u], [-0.24 * u, -0.5 * u], [-0.24 * u, 0]]), '#C9CED2'),
+        part(joints, '#737A81', { stroke: Math.max(1, 0.018 * u), opacity: 0.8 }),
+        part(poly([[-0.05 * u, -0.66 * u], [0.05 * u, -0.66 * u], [0.035 * u, -0.5 * u], [-0.035 * u, -0.5 * u]]), '#E8C36A'),
+        part(oval(-0.24 * u, -0.01 * u, 0.1 * u, 0.035 * u), '#6DBF6A'),
+        part(oval(0.25 * u, -0.01 * u, 0.08 * u, 0.03 * u), '#6DBF6A'),
+      ],
+    };
+  },
+
+  windmill: (u) => {
+    const blades = pb();
+    for (const deg of [20, 110, 200, 290]) {
+      const a = deg * DEG;
+      const c = Math.cos(a);
+      const sn = Math.sin(a);
+      const at = (d: number, w: number): [number, number] => [d * c - w * sn, -0.62 * u + d * sn + w * c];
+      const pts = [at(0.06 * u, 0), at(0.44 * u, 0), at(0.44 * u, 0.1 * u), at(0.1 * u, 0.1 * u)];
+      blades.moveTo(...pts[0]);
+      for (const q of pts.slice(1)) blades.lineTo(...q);
+      blades.close();
+    }
+    return {
+      parts: [
+        part(poly([[-0.2 * u, 0], [-0.12 * u, -0.6 * u], [0.12 * u, -0.6 * u], [0.2 * u, 0]]), '#F1E6D0'),
+        part(poly([[0.02 * u, 0], [0.04 * u, -0.6 * u], [0.12 * u, -0.6 * u], [0.2 * u, 0]]), '#D9CBB0'),
+        part(poly([[-0.16 * u, -0.58 * u], [0, -0.82 * u], [0.16 * u, -0.58 * u]]), '#C4553B'),
+        part(pb().addRRect({ rect: { x: -0.05 * u, y: -0.16 * u, width: 0.1 * u, height: 0.16 * u }, rx: 0.05 * u, ry: 0.05 * u }).build(), '#7A5230'),
+        part(oval(0, -0.4 * u, 0.04 * u, 0.05 * u), '#6FB7D9'),
+        part(blades.build(), '#FFFFFF', { opacity: 0.95 }),
+        part(Skia.Path.Circle(0, -0.62 * u, 0.04 * u), '#7A5230'),
+      ],
+    };
+  },
+
+  lighthouse: (u) => ({
+    parts: [
+      part(poly([[-0.17 * u, 0], [-0.1 * u, -0.72 * u], [0.1 * u, -0.72 * u], [0.17 * u, 0]]), '#F6F1E6'),
+      part(poly([[-0.155 * u, -0.16 * u], [-0.135 * u, -0.36 * u], [0.135 * u, -0.36 * u], [0.155 * u, -0.16 * u]]), '#D9463E'),
+      part(poly([[-0.118 * u, -0.54 * u], [-0.1 * u, -0.72 * u], [0.1 * u, -0.72 * u], [0.118 * u, -0.54 * u]]), '#D9463E'),
+      part(poly([[0.03 * u, 0], [0.02 * u, -0.72 * u], [0.1 * u, -0.72 * u], [0.17 * u, 0]]), '#1F3D2B', { opacity: 0.1 }),
+      part(pb().addRRect({ rect: { x: -0.14 * u, y: -0.76 * u, width: 0.28 * u, height: 0.045 * u }, rx: 0.02 * u, ry: 0.02 * u }).build(), '#4A5560'),
+      part(pb().addRect({ x: -0.08 * u, y: -0.9 * u, width: 0.16 * u, height: 0.14 * u }).build(), '#FFE08A'),
+      part(poly([[-0.11 * u, -0.9 * u], [0, -1.02 * u], [0.11 * u, -0.9 * u]]), '#4A5560'),
+      part(pb().addRRect({ rect: { x: -0.04 * u, y: -0.13 * u, width: 0.08 * u, height: 0.13 * u }, rx: 0.04 * u, ry: 0.04 * u }).build(), '#7A5230'),
+    ],
+    // The lamp glows (and breathes like the campfire).
+    alt: [part(Skia.Path.Circle(0, -0.83 * u, 0.2 * u), '#FFE08A', { blur: 0.12 * u, opacity: 0.55 })],
+  }),
+};
+
+/** What is left of a landmark after the streak that built it broke. */
+const RUINS: Record<string, Draw> = {
+  arch: (u) => ({
+    parts: [
+      part(poly([[-0.3 * u, 0], [-0.3 * u, -0.34 * u], [-0.22 * u, -0.4 * u], [-0.15 * u, -0.3 * u], [-0.15 * u, 0]]), '#8D949B'),
+      part(poly([[0.15 * u, 0], [0.15 * u, -0.16 * u], [0.24 * u, -0.22 * u], [0.3 * u, -0.14 * u], [0.3 * u, 0]]), '#8D949B'),
+      part(poly([[-0.06 * u, 0], [-0.04 * u, -0.08 * u], [0.06 * u, -0.09 * u], [0.09 * u, 0]]), '#737A81'),
+      part(oval(-0.22 * u, -0.01 * u, 0.12 * u, 0.035 * u), '#7C9A63'),
+      part(oval(0.2 * u, -0.2 * u, 0.06 * u, 0.025 * u), '#7C9A63'),
+    ],
+  }),
+  windmill: (u) => ({
+    parts: [
+      part(poly([[-0.2 * u, 0], [-0.15 * u, -0.38 * u], [-0.04 * u, -0.3 * u], [0.06 * u, -0.42 * u], [0.15 * u, -0.34 * u], [0.2 * u, 0]]), '#CFC4AC'),
+      part(poly([[0.04 * u, 0], [0.06 * u, -0.42 * u], [0.15 * u, -0.34 * u], [0.2 * u, 0]]), '#B5A98F'),
+      part(pb().moveTo(0.22 * u, -0.02 * u).lineTo(0.46 * u, -0.1 * u).build(), '#E9E4DA', { stroke: Math.max(2, 0.05 * u) }),
+      part(pb().addRRect({ rect: { x: -0.05 * u, y: -0.16 * u, width: 0.1 * u, height: 0.16 * u }, rx: 0.05 * u, ry: 0.05 * u }).build(), '#4E3A26'),
+      part(oval(-0.2 * u, -0.01 * u, 0.1 * u, 0.03 * u), '#7C9A63'),
+    ],
+  }),
+  lighthouse: (u) => ({
+    parts: [
+      part(poly([[-0.17 * u, 0], [-0.13 * u, -0.4 * u], [-0.03 * u, -0.32 * u], [0.05 * u, -0.46 * u], [0.13 * u, -0.36 * u], [0.17 * u, 0]]), '#D8D2C4'),
+      part(poly([[-0.155 * u, -0.16 * u], [-0.14 * u, -0.3 * u], [0.14 * u, -0.3 * u], [0.155 * u, -0.16 * u]]), '#A8574F'),
+      part(poly([[0.2 * u, 0], [0.22 * u, -0.07 * u], [0.32 * u, -0.08 * u], [0.36 * u, 0]]), '#B9B3A5'),
+      part(pb().addRRect({ rect: { x: -0.04 * u, y: -0.13 * u, width: 0.08 * u, height: 0.13 * u }, rx: 0.04 * u, ry: 0.04 * u }).build(), '#4E3A26'),
+      part(oval(-0.18 * u, -0.01 * u, 0.1 * u, 0.03 * u), '#7C9A63'),
+    ],
+  }),
+};
+
+/** What is left of a plant that died: a stump for trees, dry stalks for everything smaller. */
+const REMAINS: Record<string, Draw> = {
+  stump: (u) => ({
+    parts: [
+      part(poly([[-0.17 * u, 0], [-0.12 * u, -0.2 * u], [0.12 * u, -0.2 * u], [0.17 * u, 0]]), '#7A5A40'),
+      part(poly([[0.02 * u, 0], [0.03 * u, -0.2 * u], [0.12 * u, -0.2 * u], [0.17 * u, 0]]), '#63472F'),
+      part(oval(0, -0.2 * u, 0.12 * u, 0.045 * u), '#C9A77C'),
+      part(oval(0, -0.2 * u, 0.06 * u, 0.022 * u), '#A9855C'),
+      part(pb().moveTo(-0.17 * u, 0).lineTo(-0.26 * u, 0.02 * u).moveTo(0.17 * u, 0).lineTo(0.25 * u, 0.02 * u).build(), '#63472F', { stroke: Math.max(2, 0.04 * u) }),
+    ],
+  }),
+  stalks: (u) => ({
+    parts: [
+      part(
+        pb()
+          .moveTo(0, 0).quadTo(0.03 * u, -0.14 * u, -0.05 * u, -0.26 * u)
+          .moveTo(-0.07 * u, 0).quadTo(-0.12 * u, -0.08 * u, -0.17 * u, -0.13 * u)
+          .moveTo(0.07 * u, 0).quadTo(0.12 * u, -0.1 * u, 0.15 * u, -0.18 * u)
+          .build(),
+        '#8C7A58',
+        { stroke: Math.max(1.5, 0.03 * u) },
+      ),
+      part(leafPath(-0.05 * u, -0.26 * u, 160, 0.09 * u, 0.03 * u), '#A8946A'),
+      part(leafPath(0.15 * u, -0.18 * u, 20, 0.08 * u, 0.025 * u), '#A8946A'),
+      part(oval(0, 0, 0.11 * u, 0.03 * u), '#9A8A63', { opacity: 0.7 }),
+    ],
+  }),
+  // The dead twig a withered session leaves behind for a day.
+  twig: (u) => ({
+    parts: [
+      part(
+        pb()
+          .moveTo(0, 0).quadTo(-0.02 * u, -0.16 * u, 0.03 * u, -0.32 * u)
+          .moveTo(0.005 * u, -0.14 * u).lineTo(-0.1 * u, -0.24 * u)
+          .moveTo(0.015 * u, -0.22 * u).lineTo(0.12 * u, -0.3 * u)
+          .build(),
+        '#6B5540',
+        { stroke: Math.max(1.5, 0.032 * u) },
+      ),
+      part(leafPath(-0.1 * u, -0.24 * u, 215, 0.08 * u, 0.028 * u), '#9A8A63'),
+      part(oval(0, 0, 0.08 * u, 0.025 * u), '#5E4B38', { opacity: 0.5 }),
+    ],
+  }),
 };
 
 const cache = new Map<string, CreatureSprite>();
+
+/** Remains of a dead plant ('stump' or 'stalks') or the twig of a withered session. */
+export function remainsSprite(kind: 'stump' | 'stalks' | 'twig', unit: number): CreatureSprite {
+  const u = Math.round(unit * 2) / 2;
+  const key = `r:${kind}@${u}`;
+  let s = cache.get(key);
+  if (!s) {
+    s = { ...REMAINS[kind](u), width: (kind === 'stump' ? 0.5 : 0.34) * u, height: 0.3 * u };
+    cache.set(key, s);
+  }
+  return s;
+}
 
 export function animalSprite(id: string, unit: number): CreatureSprite | null {
   const draw = ANIMALS[id];
@@ -399,12 +557,13 @@ export function hasAnimalSprite(id: string) {
   return id in ANIMALS;
 }
 
-export function terrainSprite(kind: TerrainKind, unit: number): CreatureSprite {
+export function terrainSprite(kind: TerrainKind, unit: number, ruined = false): CreatureSprite {
   const u = Math.round(unit * 2) / 2;
-  const key = `t:${kind}@${u}`;
+  const draw = ruined && RUINS[kind] ? RUINS[kind] : TERRAIN[kind];
+  const key = `t:${kind}${draw === TERRAIN[kind] ? '' : ':ruin'}@${u}`;
   let s = cache.get(key);
   if (!s) {
-    s = { ...TERRAIN[kind](u), width: 0.7 * u, height: 0.55 * u };
+    s = { ...draw(u), width: 0.7 * u, height: 0.55 * u };
     cache.set(key, s);
   }
   return s;

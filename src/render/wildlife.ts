@@ -226,7 +226,9 @@ export function buildWildlife(
   const tiles = tilesInRadius(world.radius);
   const kindOf = (key: string) => {
     const seed = seeds[world.tiles[key]];
-    return seed ? getSpecies(seed.speciesId).kind : null;
+    if (!seed) return null;
+    // A stump is in the way, but it is no tree to perch on and no flower to visit.
+    return seed.diedAt != null ? 'stump' : getSpecies(seed.speciesId).kind;
   };
   const isWater = (key: string) => world.terrain[key] === 'water';
   const lowPlant = (key: string) => {
@@ -284,6 +286,19 @@ export function buildWildlife(
   const swarms: Swarm[] = [];
   let fish: FishSchool | null = null;
 
+  /** A young one walks the same route as its parent, a few steps behind. */
+  const addYoung = (id: string, scale: number) => {
+    const parent = actors.find((a) => a.id === id);
+    if (!parent || !residents.find((r) => r.id === id)?.young) return;
+    actors.push({
+      ...parent,
+      key: `${id}:young`,
+      offset: parent.offset - 1.3,
+      unit: l.unit * scale * 0.62,
+      hop: parent.hop * 0.7,
+    });
+  };
+
   for (const r of residents) {
     const def = getAnimal(r.id);
     if (!def) continue;
@@ -309,6 +324,7 @@ export function buildWildlife(
           shy: def.shy,
         });
       }
+      addYoung(r.id, walker.scale);
       continue;
     }
 
@@ -394,6 +410,7 @@ export function buildWildlife(
           shy: def.shy,
         });
       }
+      addYoung('duck', 1.1);
       continue;
     }
 

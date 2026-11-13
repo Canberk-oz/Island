@@ -9,6 +9,11 @@ export function dayIndex(ts: number, tzOffsetMin: number = new Date(ts).getTimez
   return Math.floor((ts - tzOffsetMin * 60_000 - CONFIG.dayRolloverHour * HOUR_MS) / DAY_MS);
 }
 
+/** The moment a focus day starts (inverse of `dayIndex`). */
+export function dayStartAt(index: number, tzOffsetMin: number = new Date(index * DAY_MS).getTimezoneOffset()): number {
+  return index * DAY_MS + CONFIG.dayRolloverHour * HOUR_MS + tzOffsetMin * 60_000;
+}
+
 /** "YYYY-MM-DD" for a day index. */
 export function dayKey(index: number): string {
   return new Date(index * DAY_MS).toISOString().slice(0, 10);

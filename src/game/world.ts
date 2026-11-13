@@ -80,7 +80,10 @@ export function plantSeed(state: GameState, seedId: string, x: number, y: number
   };
 }
 
-/** Dig a plant up and put its seed back in the tray. The island never shrinks. */
+/**
+ * Dig a plant up and put its seed back in the tray. A stump has no seed left:
+ * clearing it frees the tile and the plant is gone. The island never shrinks.
+ */
 export function digUp(state: GameState, x: number, y: number): GameState {
   const key = tileKey(x, y);
   const seedId = state.world.tiles[key];
@@ -88,11 +91,14 @@ export function digUp(state: GameState, x: number, y: number): GameState {
   const tiles = { ...state.world.tiles };
   delete tiles[key];
   const seed = state.seeds[seedId];
-  return {
-    ...state,
-    world: { ...state.world, tiles },
-    seeds: seed ? { ...state.seeds, [seedId]: { ...seed, tile: null, plantedAt: null } } : state.seeds,
-  };
+  let seeds = state.seeds;
+  if (seed?.diedAt != null) {
+    seeds = { ...state.seeds };
+    delete seeds[seedId];
+  } else if (seed) {
+    seeds = { ...state.seeds, [seedId]: { ...seed, tile: null, plantedAt: null } };
+  }
+  return { ...state, world: { ...state.world, tiles }, seeds };
 }
 
 /** Seeds waiting in the tray, newest first. */

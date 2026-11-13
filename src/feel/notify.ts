@@ -1,14 +1,14 @@
 import Constants from 'expo-constants';
 import { Platform } from 'react-native';
 import { CONFIG, HOUR_MS } from '../game/config';
-import { vitalityNow } from '../game/decay';
+import { callName, threats } from '../game/stakes';
 import { useStore } from '../store/store';
 
 type NotificationsModule = typeof import('expo-notifications');
 
 const CHANNEL = 'grove';
 const LEAVE_ID = 'grove-leave';
-const WILT_IDS = ['grove-wilt-1', 'grove-wilt-2'];
+const WILT_IDS = ['grove-wilt-1', 'grove-wilt-2', 'grove-leaving', 'grove-left', 'grove-stump', 'grove-streak'];
 
 let mod: NotificationsModule | null | undefined;
 let ready = false;
@@ -103,9 +103,10 @@ export async function clearLeaveWarning() {
 }
 
 /**
- * Schedule the gentle reminders for the island: one when it starts to fade and
- * one when it is about half faded. Called whenever the app goes to the
- * background, so the schedule always reflects the latest focus.
+ * Schedule what the island has to say while the app is closed: when it starts
+ * to fade, which animal is getting restless, who is about to leave and who
+ * left. Called whenever the app goes to the background, so the schedule
+ * always reflects the latest focus.
  */
 export async function scheduleWiltReminders() {
   const N = notifications();
@@ -114,24 +115,43 @@ export async function scheduleWiltReminders() {
     for (const id of WILT_IDS) await N.cancelScheduledNotificationAsync(id);
     if (!enabled()) return;
     const { game, now } = useStore.getState();
-    const world = game.world;
-    if (world.graceUntil == null || Object.keys(world.tiles).length === 0) return;
     const t = now();
     const real = Date.now();
-    const fadingFrom = Math.max(world.graceUntil, world.vitalityAt);
-    const plan: [string, number, string, string][] = [
-      [WILT_IDS[0], fadingFrom + 2 * HOUR_MS, 'Your island is getting thirsty', 'A short focus session keeps it green.'],
-      [
-        WILT_IDS[1],
-        fadingFrom + 0.5 * CONFIG.decay.hoursToEmpty * HOUR_MS,
-        'Your island is losing its colour',
-        'Nothing is lost: one session brings it back.',
-      ],
-    ];
+    const plan: [string, number, string, string][] = [];
+    const list = threats(game, t);
+    const find = (kind: string) => list.find((x) => x.kind === kind);
+    const upper = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+
+    const fade = find('fade');
+    if (fade) plan.push([WILT_IDS[0], fade.at + 2 * HOUR_MS, 'Your island is getting thirsty', 'A short focus session keeps it green.']);
+
+    const hide = find('hide');
+    if (hide?.animalId) {
+      const who = upper(callName(hide.animalId, hide.name));
+      plan.push([WILT_IDS[1], hide.at - HOUR_MS, `${who} is getting restless`, 'The island is wilting. One session and it stays out.']);
+    } else if (fade) {
+      plan.push([WILT_IDS[1], fade.at + 0.5 * CONFIG.decay.hoursToEmpty * HOUR_MS, 'Your island is losing its colour', 'One session brings it back.']);
+    }
+
+    const leave = find('leave');
+    if (leave?.animalId) {
+      const who = upper(callName(leave.animalId, leave.name));
+      plan.push([WILT_IDS[2], leave.at - 12 * HOUR_MS, `${who} is about to leave`, 'Your island has been dry for days. Focus today and it stays.']);
+      plan.push([WILT_IDS[3], leave.at + 60_000, `${who} left your island`, `It comes back after ${CONFIG.stakes.returnDays} days of focus.`]);
+    }
+
+    const stump = find('stump');
+    if (stump) plan.push([WILT_IDS[4], stump.at - 6 * HOUR_MS, 'Your plants are dying', 'The first one will be a stump in a few hours. A session saves it.']);
+
+    const streak = find('streak');
+    if (streak) {
+      const n = game.progress.streak;
+      plan.push([WILT_IDS[5], streak.at - 4 * HOUR_MS, `Your ${n}-day streak ends tonight`, `Focus ${CONFIG.streak.minQualifyingMin} minutes to keep it.`]);
+    }
+
     for (const [identifier, at, title, body] of plan) {
       const seconds = Math.round((at - t) / 1000);
       if (seconds < 60) continue;
-      if (vitalityNow(world, at) <= 0) continue;
       await N.scheduleNotificationAsync({
         identifier,
         content: { title, body },

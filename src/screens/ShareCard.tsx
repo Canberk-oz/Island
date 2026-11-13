@@ -8,7 +8,7 @@ import { haptic } from '../feel/haptics';
 import { playSound } from '../feel/sound';
 import { vitalityNow } from '../game/decay';
 import { dayIndex, dayKey, formatMinutes, isoWeek, weekStart } from '../game/time';
-import { residents } from '../game/nature';
+import { islandResidents, waterLevel } from '../game/stakes';
 import { Island, layoutIsland } from '../render/Island';
 import { EMPTY_SCENE, buildWildlife } from '../render/wildlife';
 import { Sky } from '../render/scene';
@@ -53,8 +53,10 @@ export function ShareCard({ visible, onClose }: { visible: boolean; onClose: () 
   // The picture shows the animals that are out right now.
   const scene = useMemo(() => {
     if (!visible) return EMPTY_SCENE;
-    return buildWildlife(layout, game.world, game.seeds, residents(game.world, game.seeds, 1), palette.dark);
-  }, [visible, layout, game.world, game.seeds, palette.dark]);
+    return buildWildlife(layout, game.world, game.seeds, islandResidents(game, now(), 1).filter((r) => !r.dry), palette.dark);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, layout, game.world, game.seeds, game.nature, palette.dark]);
+  const ruined = useMemo(() => Object.entries(game.nature.landmarks).filter(([, m]) => m?.ruined).map(([k]) => k), [game.nature.landmarks]);
 
   const pop = useSharedValue(0.9);
   useEffect(() => {
@@ -101,7 +103,7 @@ export function ShareCard({ visible, onClose }: { visible: boolean; onClose: () 
             <Canvas ref={ref} style={{ width: cw, height: ch }} testID="share-canvas">
               <Group clip={{ rect: { x: 0, y: 0, width: cw, height: ch }, rx: 0, ry: 0 }}>
                 <Sky w={cw} h={ch} palette={palette} clock={clock} />
-                <Island layout={layout} world={game.world} seeds={game.seeds} scene={scene} vitality={vitality} clock={clock} still />
+                <Island layout={layout} world={game.world} seeds={game.seeds} scene={scene} vitality={vitality} clock={clock} waterLevel={waterLevel(game, t)} ruined={ruined} still />
                 <SkText x={cw * 0.07} y={cw * 0.12} text="GROVE" font={brand} color={ink} opacity={0.7} />
                 <SkText x={cw * 0.07} y={cw * 0.235} text={`Week ${week}`} font={title} color={ink} />
                 <RoundedRect x={cw * 0.04} y={ch - cw * 0.17} width={cw * 0.92} height={cw * 0.11} r={cw * 0.055} color="rgba(255,255,255,0.9)" />

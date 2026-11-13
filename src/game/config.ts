@@ -71,6 +71,60 @@ export const CONFIG = {
     goalStepMin: 15,
   },
 
+  /**
+   * What neglect costs. Everything here is driven by the drought meter: the
+   * hours the island has spent at zero vitality, minus one hour per focused
+   * minute. A full island takes 20 h + 72 h to reach zero, so the first
+   * permanent loss is about five and a half days of no focus at all.
+   */
+  stakes: {
+    /** The meter stops here: neglect never becomes a debt of more than six hours of focus. */
+    maxDroughtHours: 360,
+    /** Drought hours each focused minute pays back. */
+    droughtPaidPerMinute: 1,
+    /** Drought hours after which the shyest animal (shy 0.65) leaves. */
+    leaveAfterHours: 36,
+    /** Extra hours per 0.1 of hardiness: the boldest animal (shy 0.25) stays 108 h longer. */
+    leaveHoursPerHardiness: 27,
+    /** Every bond level makes an animal wait this much longer before leaving. */
+    leaveHoursPerBondLevel: 12,
+    /** A family with young does not wait: it leaves after this many hours. */
+    familyLeavesAfterHours: 24,
+    /** Focus days an animal needs before it moves back in. */
+    returnDays: 5,
+    /** Bond points lost per day an animal spends hiding. */
+    bondLossPerHiddenDay: 1,
+    /** Bond points at which each level starts: stranger, familiar, friend, companion, family. */
+    bondLevels: [0, 3, 7, 14, 30] as readonly number[],
+    maxBond: 40,
+    /** Streak needed before animals have young, and the bond level the parents need. */
+    youngAtStreak: 7,
+    youngAtBondLevel: 2,
+    /** Days between two births on the island, and days until a young one is grown. */
+    daysBetweenBirths: 3,
+    youngGrowsInDays: 10,
+    /** Drought hours after which the first common plant dies; the rest follow over `plantDeathSpreadHours`. */
+    plantDiesAfterHours: 60,
+    plantDeathSpreadHours: 96,
+    plantDeathExtraHours: { common: 0, rare: 36, epic: 72, legendary: 192 } as Record<Rarity, number>,
+    /** Coins to bring a stump back to life right away. */
+    reviveCost: { common: 15, rare: 30, epic: 60, legendary: 120 } as Record<Rarity, number>,
+    /** Water is gone after this many drought hours. */
+    waterDryHours: 48,
+    /** Below this vitality the water already starts to sink. */
+    waterLowBelow: 0.2,
+    /** A withered session leaves a dead twig on the island for this long. */
+    scarHours: 24,
+    /** Comeback quest: focus days needed, and the days you have for them. */
+    revivalDays: 3,
+    revivalWindowDays: 5,
+    /** Streak lengths that build a landmark. A ruined one is rebuilt at this fraction of its streak. */
+    landmarkStreaks: { arch: 7, windmill: 30, lighthouse: 100 },
+    landmarkRebuildFraction: 0.5,
+    /** Diary entries kept. */
+    newsCap: 60,
+  },
+
   /** Session history kept on device. */
   historyCap: 400,
 } as const;

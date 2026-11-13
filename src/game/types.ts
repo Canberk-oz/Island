@@ -37,6 +37,8 @@ export interface Seed {
   /** "x,y" of the tile it grows on, or null while it waits in the seed tray. */
   tile: string | null;
   plantedAt: number | null;
+  /** Set when the plant died of neglect: it stands as a stump until it is revived or cleared. */
+  diedAt?: number | null;
 }
 
 export interface World {
@@ -52,9 +54,59 @@ export interface World {
   terrain: Record<string, TerrainKind>;
 }
 
-export type TerrainKind = 'water' | 'rock' | 'log' | 'hive' | 'campfire';
+export type LandmarkKind = 'arch' | 'windmill' | 'lighthouse';
+export type TerrainKind = 'water' | 'rock' | 'log' | 'hive' | 'campfire' | LandmarkKind;
 
-export const TERRAIN_KINDS: readonly TerrainKind[] = ['water', 'rock', 'log', 'hive', 'campfire'];
+export const LANDMARK_KINDS: readonly LandmarkKind[] = ['arch', 'windmill', 'lighthouse'];
+export const TERRAIN_KINDS: readonly TerrainKind[] = ['water', 'rock', 'log', 'hive', 'campfire', ...LANDMARK_KINDS];
+
+/** How well an animal knows you. */
+export interface Bond {
+  /** Grows by one on every day you focus while the animal is out, shrinks while it hides. */
+  points: number;
+  /** Given once the animal becomes a friend. It keeps the name even if it leaves. */
+  name: string | null;
+}
+
+/** An animal that moved away after a long drought. */
+export interface Away {
+  leftAt: number;
+  /** Focus days collected toward its return. */
+  days: number;
+}
+
+export type NewsKind =
+  | 'left'
+  | 'returned'
+  | 'died'
+  | 'revived'
+  | 'born'
+  | 'befriended'
+  | 'landmark'
+  | 'ruined'
+  | 'rebuilt'
+  | 'questStarted'
+  | 'questDone'
+  | 'questFailed';
+
+/** One line of the island diary. */
+export interface NewsItem {
+  at: number;
+  kind: NewsKind;
+  /** Animal id, species id or landmark kind, depending on the kind. */
+  subject: string;
+  /** The animal's name, when it has one. */
+  name?: string | null;
+  /** How many (plants that died or were revived at once). */
+  count?: number;
+}
+
+/** The comeback quest: focus on three days to win back half of what was lost. */
+export interface Revival {
+  startDay: number;
+  /** Focus days done so far. */
+  days: number;
+}
 
 export interface Nature {
   /** Nature pieces waiting to be placed. */
@@ -63,6 +115,32 @@ export interface Nature {
   levelClaimed: number;
   /** animal id -> when it first moved in */
   discovered: Record<string, number>;
+  /**
+   * Hours the island has spent completely wilted, minus what focus has paid
+   * back. This is the damage meter: animals leave and plants die as it grows.
+   */
+  drought: number;
+  /**
+   * Fresh starts: animal id or seed id -> the drought level at which it came
+   * back. Its limit counts from there, so nothing that was just won back is
+   * lost again a moment later. Cleared when the drought is fully paid off.
+   */
+  spared: Record<string, number>;
+  /** Moment up to which `drought` and the bonds are accounted for. */
+  settledAt: number;
+  bonds: Record<string, Bond>;
+  /** animal id -> it moved away */
+  away: Record<string, Away>;
+  /** animal id -> when its young was born */
+  family: Record<string, number>;
+  lastBirthDay: number | null;
+  /** Streak landmarks that were earned, and whether a lost streak left them in ruins. */
+  landmarks: Partial<Record<LandmarkKind, { earnedAt: number; ruined: boolean }>>;
+  revival: Revival | null;
+  /** Island diary, oldest first. */
+  news: NewsItem[];
+  /** Diary entries after this moment have not been shown yet. */
+  newsSeenAt: number;
 }
 
 export interface Economy {
@@ -123,6 +201,8 @@ export interface CompletionSummary {
   levelAfter: number;
   /** Nature pieces handed out by the level-ups of this session. */
   granted: Partial<Record<TerrainKind, number>>;
+  /** What this session changed on the island (returns, revivals, births, ...). */
+  news: NewsItem[];
 }
 
 export interface WitherSummary {

@@ -6,8 +6,9 @@ and the sapling withers. Seeds become plants on an island that slowly fades on
 the days you do not focus, and comes back when you do.
 
 The island is alive: focus earns water, rocks and other pieces of nature to
-place, and animals move in when the island suits them. Neglect it and they
-hide, one by one, until you focus again.
+place, and animals move in when the island suits them. They get to know you,
+get names and have young. Neglect the island and they hide, then move away;
+plants die and the water dries up. All of it can be won back with focus.
 
 Built with Expo (React Native) and TypeScript. Everything is stored on the
 phone; there is no backend.
@@ -42,7 +43,17 @@ npm run build:apk     # android/app/build/outputs/apk/release/app-release.apk
 | **Session** | 1 to 120 minutes. The screen stays on. Leaving the app for more than 6 seconds withers the sapling; shorter absences are forgiven up to 3 times per session. |
 | **Seeds** | Every finished session drops a seed: common 70%, rare 22%, epic 7%, legendary 1% at 25 minutes. Longer sessions are luckier, and after 7 commons in a row the next one is rare or better. |
 | **Island** | You plant seeds yourself. The island grows when 70% of its tiles are planted (9 → 21 → 37 → 69 tiles). |
-| **Decay** | Nothing fades for 20 hours after a session of 10+ minutes. After that the island takes 72 hours to wilt completely. It never drops below zero and nothing dies: 75 minutes of focus revive a fully wilted island, 25 minutes undo one missed day. |
+| **Decay** | Nothing fades for 20 hours after a session of 10+ minutes. After that the island takes 72 hours to wilt completely. 75 minutes of focus bring a fully wilted island back to full colour, 25 minutes undo one missed day. |
+| **Drought** | Once the island is completely wilted a drought meter starts counting the hours. Every focused minute pays one hour back, and the meter stops at 360 hours. Everything below is driven by it, so 10 minutes a day (or 25 minutes every other day) never loses anything. |
+| **Animals leave** | The shyest animal moves away after 36 hours of drought, the boldest after 144: about five and a half days of no focus at all for the first one. An animal that left returns after 5 days with a session of 10+ minutes. |
+| **Friendship** | Every day you focus, each animal that is out gets to know you better: familiar after 3 days, friend after 7 (it gets a name), companion after 14, family after 30. Friends wait 12 hours longer per level before leaving. The bond cools while an animal hides and is lost when it leaves; the name stays. |
+| **Young** | On a streak of 7+ days a befriended animal has a young one that follows it around and is grown after 10 days. A family with young leaves a dry island after only 24 hours. |
+| **Plants die** | After 60 hours of drought the first common plant dies and leaves a stump; rarer plants hold out longer (legendary ones more than two weeks). Every session of 10+ minutes revives one stump, the rarest first. Coins revive one right away; clearing a stump frees the tile for good. |
+| **Water dries** | Ponds sink when the island wilts and are mud after 48 hours of drought. Fish, ducks and frogs stay away until the water is back. |
+| **Revival** | The first session after a loss starts a revival: focus on 3 days within 5 and half of the animals and plants you lost come back at once. |
+| **Landmarks** | A streak of 7, 30 and 100 days builds a stone arch, a windmill and a lighthouse to place. They fall to ruins when the streak breaks and are rebuilt at half that streak. |
+| **Countdown** | Every screen shows the island's health and the next thing that goes wrong if you do not focus ("Rusty the fox hides in 9 h"). Notifications say the same while the app is closed. |
+| **Marks** | A session that withers leaves a dead twig on the island for a day. |
 | **Wager** | Stake up to 2 coins per session minute. Finish and get 1.5x back, leave and lose the stake. |
 | **Coins** | 1 per focused minute. A lucky pouch (100 coins) holds a seed that is rare or better. |
 | **Streak** | A day counts with one finished session of 10+ minutes. Days roll over at 04:00. |
@@ -51,7 +62,7 @@ npm run build:apk     # android/app/build/outputs/apk/release/app-release.apk
 | **Island level** | Lifetime focus raises the island level (level 2 at 30 minutes, level 5 at 5 hours, level 10 at 30 hours, then one per 10 hours). Each level hands out nature pieces to place: water, rocks, a hollow log, a beehive, a campfire. |
 | **Water** | Water tiles join up: one or two make a pond, three or more a lake. Water at the front rim of the island falls over the edge. |
 | **Wildlife** | 13 animals, none of them bought. Each needs a habitat, for example a frog needs water, a deer needs 3 trees and a lake, a fox needs 10 plants and a hollow log. The Journal shows who is missing and what they need. |
-| **Hiding** | Animals hide when the island wilts, the shyest first (fox and deer below about 60% vitality), and return when it recovers. None is ever lost. |
+| **Hiding** | Animals hide when the island wilts, the shyest first (fox and deer below about 60% vitality), and come out again when it recovers. |
 | **Sound** | The island has a soundscape: birds and wind by day, crickets at night, running water where there is water. It gets quieter as the island wilts. Tap an animal to hear it. |
 | **Share** | The Share button renders the island with this week's numbers as a picture. |
 
@@ -72,6 +83,12 @@ Each plant has its own threshold (edge plants first, legendary plants last), so
 the island droops plant by plant. When you open the Island tab it animates from
 the vitality you last saw to the current one.
 
+The drought meter works the same way: it is the stored value plus the hours
+spent at zero vitality since it was last settled. It is settled when the app
+is opened and before every finished session, and that is the moment animals
+leave and plants die. Something that came back counts its limit from the
+meter's level at that moment, so it is never lost again a minute later.
+
 ## Project layout
 
 ```
@@ -83,6 +100,7 @@ src/game/      Pure game logic: no React, no storage, no clock. Fully unit teste
   streak.ts      streak, freezes, daily ring
   world.ts       island tiles, planting, growth
   nature.ts      island levels, nature pieces, water bodies, animal habitats
+  stakes.ts      drought, animals leaving, friendship, young, stumps, revival, landmarks, countdowns
   economy.ts     coins and wager
 src/store/     Zustand store: wires the pure logic to the clock and AsyncStorage
 src/render/    Skia drawing: sapling, plants, island, water, animals, sky, particles
@@ -106,8 +124,9 @@ npm run check         # TypeScript + unit tests
 
 Journal → Settings → *Developer tools* adds a 10 second test session to the
 duration dial, plus buttons to skip the clock forward (to watch the island
-fade and the animals hide), add coins, add focus time (to raise the island
-level) and erase all data.
+fade, the animals leave and the plants die), add coins, add focus time (to
+raise the island level), lengthen the streak (to build landmarks) and erase
+all data.
 
 Every session event is written to the device log, which helps when testing the
 leave detection on a real phone:
