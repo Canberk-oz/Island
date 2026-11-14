@@ -73,6 +73,8 @@ export interface CreatureSprite {
   alt?: PlantPart[];
   /** Parts only shown in the resting pose (wings folded). */
   rest?: PlantPart[];
+  /** Parts that turn around a point (the sails of the windmill). */
+  spin?: { parts: PlantPart[]; cx: number; cy: number };
   /** Approximate size for hit testing and shadows, in pixels. */
   width: number;
   height: number;
@@ -85,6 +87,8 @@ const ANIMAL_SIZE: Record<string, [number, number]> = {
   squirrel: [0.45, 0.6],
   hedgehog: [0.55, 0.3],
   fox: [0.8, 0.6],
+  fox_sleep: [0.7, 0.3],
+  hedgehog_ball: [0.4, 0.3],
   deer: [0.8, 1.15],
   frog: [0.4, 0.26],
   duck: [0.5, 0.34],
@@ -173,6 +177,37 @@ const ANIMALS: Record<string, Draw> = {
         part(Skia.Path.Circle(0.3 * u, -0.38 * u, 0.018 * u), DARK),
       ],
     };
+  },
+
+  // The fox at noon: curled up, nose under its tail.
+  fox_sleep: (u) => {
+    const fur = '#E8833A';
+    const ears = pb();
+    ears.moveTo(0.1 * u, -0.2 * u).lineTo(0.13 * u, -0.31 * u).lineTo(0.19 * u, -0.21 * u).close();
+    ears.moveTo(0.19 * u, -0.2 * u).lineTo(0.25 * u, -0.29 * u).lineTo(0.27 * u, -0.17 * u).close();
+    return {
+      parts: [
+        part(oval(0, -0.12 * u, 0.3 * u, 0.13 * u), fur),
+        part(oval(-0.04 * u, -0.17 * u, 0.2 * u, 0.07 * u), '#F09A55'),
+        part(ears.build(), fur),
+        part(Skia.Path.Circle(0.18 * u, -0.13 * u, 0.095 * u), fur),
+        part(leafPath(0.3 * u, -0.03 * u, 178, 0.5 * u, 0.085 * u), fur),
+        part(Skia.Path.Circle(-0.19 * u, -0.035 * u, 0.05 * u), '#FFF6EA'),
+        part(pb().moveTo(0.13 * u, -0.13 * u).quadTo(0.16 * u, -0.11 * u, 0.19 * u, -0.13 * u).build(), DARK, { stroke: Math.max(1, 0.014 * u) }),
+      ],
+    };
+  },
+
+  // A startled hedgehog: all spikes.
+  hedgehog_ball: (u) => {
+    const spikes: [number, number][] = [];
+    const n = 18;
+    for (let i = 0; i < n; i++) {
+      const a = (Math.PI * 2 * i) / n;
+      const r = (i % 2 ? 0.2 : 0.145) * u;
+      spikes.push([Math.cos(a) * r, -0.15 * u + Math.sin(a) * r * 0.9]);
+    }
+    return { parts: [part(poly(spikes), '#6B4F3A'), part(Skia.Path.Circle(0, -0.15 * u, 0.12 * u), '#7C5C44')] };
   },
 
   deer: (u) => {
@@ -427,9 +462,12 @@ const TERRAIN: Record<TerrainKind, Draw> = {
         part(poly([[-0.16 * u, -0.58 * u], [0, -0.82 * u], [0.16 * u, -0.58 * u]]), '#C4553B'),
         part(pb().addRRect({ rect: { x: -0.05 * u, y: -0.16 * u, width: 0.1 * u, height: 0.16 * u }, rx: 0.05 * u, ry: 0.05 * u }).build(), '#7A5230'),
         part(oval(0, -0.4 * u, 0.04 * u, 0.05 * u), '#6FB7D9'),
-        part(blades.build(), '#FFFFFF', { opacity: 0.95 }),
-        part(Skia.Path.Circle(0, -0.62 * u, 0.04 * u), '#7A5230'),
       ],
+      spin: {
+        parts: [part(blades.build(), '#FFFFFF', { opacity: 0.95 }), part(Skia.Path.Circle(0, -0.62 * u, 0.04 * u), '#7A5230')],
+        cx: 0,
+        cy: -0.62 * u,
+      },
     };
   },
 

@@ -1,6 +1,6 @@
 import { Canvas } from '@shopify/react-native-skia';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AppState, Pressable, ScrollView, StyleSheet, View, useWindowDimensions, type GestureResponderEvent } from 'react-native';
+import { AppState, PanResponder, ScrollView, StyleSheet, View, useWindowDimensions } from 'react-native';
 import Animated, {
   Easing,
   FadeIn,
@@ -14,7 +14,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { haptic } from '../feel/haptics';
-import { playAnimal, playSound, setAmbience, stopAmbience } from '../feel/sound';
+import { playAnimal, playSound, setAmbience, soundscape, stopAmbience } from '../feel/sound';
 import { CONFIG } from '../game/config';
 import { hoursUntilFading, minutesToFullVitality, moodOf, vitalityNow, type VitalityMood } from '../game/decay';
 import { TERRAIN_INFO, getAnimal, levelProgress, residents } from '../game/nature';
@@ -24,17 +24,18 @@ import { formatTime, newsText, newsTone, threatLevel, threatText } from '../ui/s
 import { RARITY_LABEL, getSpecies } from '../game/species';
 import { RARITIES, TERRAIN_KINDS, type Seed, type TerrainKind } from '../game/types';
 import { formatMinutes } from '../game/time';
-import { parseTile, plantsUntilExpansion, tileKey, tilesInRadius, unplantedSeeds } from '../game/world';
+import { GROWTH_LABELS, daysToNextGrowth, growthStage, parseTile, plantsUntilExpansion, tileKey, tilesInRadius, unplantedSeeds } from '../game/world';
 import { Burst } from '../render/Burst';
 import { Island, layoutIsland, screenToTile, tileToScreen } from '../render/Island';
 import { PlantIcon, PlantSheet, type SheetItem } from '../render/PlantSprite';
 import { NO_POKE, type Poke } from '../render/Wildlife';
 import { useClockMs } from '../render/clock';
-import { Sky } from '../render/scene';
-import { buildWildlife, fishTileAt, hitWildlife } from '../render/wildlife';
+import { Lit, Sky, WeatherFront } from '../render/scene';
+import { useAtmosphere } from '../render/useAtmosphere';
+import { buildWildlife, fishTileAt, hitWildlife, trackAt } from '../render/wildlife';
 import { useStore } from '../store/store';
 import { Button, CoinIcon, PressableScale, Txt } from '../ui/kit';
-import { colors, motion, radius, rarityColor, rarityTint, skyForHour } from '../ui/theme';
+import { colors, motion, radius, rarityColor, rarityTint } from '../ui/theme';
 import { SeedReveal } from './SeedReveal';
 
 const MOOD: Record<VitalityMood, { label: string; color: string }> = {
@@ -102,8 +103,9 @@ export function IslandScreen({
   }, [refresh, settings.timeOffsetMs]);
 
   const clock = useClockMs(true);
-  const palette = useMemo(() => skyForHour(new Date(now()).getHours()), [now, settings.timeOffsetMs]);
-  const night = palette.dark;
+  const { atmo, palette } = useAtmosphere();
+  const night = atmo.night;
+  const frozen = atmo.season === 'winter';
   const world = game.world;
   const stock = game.nature.stock;
   const waiting = useMemo(() => unplantedSeeds(game), [game]);
@@ -150,6 +152,39 @@ export function IslandScreen({
   // vitality that was last on screen to the current one.
   const target = vitalityNow(world, now());
   const vitality = useSharedValue(settings.lastSeenVitality);
+  const flood = useSharedValue(0);
+  const sweep = useSharedValue(0);
+
+  // --- the camera -----------------------------------------------------------
+  // Pinch to zoom, drag to look around, or step through the zoom levels with the button.
+  const zoom = useSharedValue(1);
+  const panX = useSharedValue(0);
+  const panY = useSharedValue(0);
+  const [zoomLabel, setZoomLabel] = useState(1);
+  const cam = useRef({ zoom: 1, x: 0, y: 0 });
+  const moveCamera = useCallback(
+    (z: number, x: number, y: number, animate = false) => {
+      const zz = Math.min(3, Math.max(1, z));
+      // The island may not leave the screen.
+      const maxX = (zz - 1) * w * 0.5 + (zz > 1 ? 40 : 0);
+      const maxY = (zz - 1) * h * 0.3 + (zz > 1 ? 40 : 0);
+      const xx = Math.min(maxX, Math.max(-maxX, x));
+      const yy = Math.min(maxY, Math.max(-maxY, y));
+      cam.current = { zoom: zz, x: xx, y: yy };
+      if (animate) {
+        const cfg = { duration: 420, easing: Easing.inOut(Easing.cubic) };
+        zoom.value = withTiming(zz, cfg);
+        panX.value = withTiming(xx, cfg);
+        panY.value = withTiming(yy, cfg);
+      } else {
+        zoom.value = zz;
+        panX.value = xx;
+        panY.value = yy;
+      }
+      setZoomLabel(Math.round(zz * 10) / 10);
+    },
+    [h, panX, panY, w, zoom],
+  );
   const lastTarget = useRef<number | null>(null);
   useEffect(() => {
     const from = lastTarget.current ?? settings.lastSeenVitality;
@@ -167,6 +202,11 @@ export function IslandScreen({
           haptic('success');
           playSound('grow', 0.6);
         });
+      // Fresh green spreads from the middle of the island outward.
+      if (delta > 0.08) {
+        flood.value = 0;
+        flood.value = withDelay(500, withTiming(1, { duration: 2000, easing: Easing.out(Easing.cubic) }));
+      }
     }
     updateSettings({ lastSeenVitality: target });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,7 +241,19 @@ export function IslandScreen({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.sessions, world.radius, world.tiles, world.terrain]);
   const markKeys = useMemo(() => Object.keys(marks), [marks]);
-  const scene = useMemo(() => buildWildlife(layout, world, game.seeds, habitat, night), [layout, world, game.seeds, habitat, night]);
+  const dayPart = atmo.hour >= 11 && atmo.hour < 15 ? 'noon' : 'other';
+  const scene = useMemo(
+    () => buildWildlife(layout, world, game.seeds, habitat, night, dayPart === 'noon' ? 12 : 9, frozen),
+    [layout, world, game.seeds, habitat, night, dayPart, frozen],
+  );
+  /** Screen position of a point on the island, through the camera. */
+  const toScreen = useCallback(
+    (x: number, y: number) => {
+      const c = cam.current;
+      return { x: layout.cx + (x - layout.cx) * c.zoom + c.x, y: layout.cy + (y - layout.cy) * c.zoom + c.y };
+    },
+    [layout],
+  );
   const out = useMemo(
     () => habitat.filter((r) => target >= (getAnimal(r.id)?.shy ?? 1) && (night || !getAnimal(r.id)?.nocturnal)),
     [habitat, target, night],
@@ -214,6 +266,9 @@ export function IslandScreen({
     setBanner({ id, text });
     setTimeout(() => setBanner((b) => (b?.id === id ? null : b)), 3200);
   }, []);
+
+  const sceneRef = useRef(scene);
+  sceneRef.current = scene;
 
   // Welcome animals that moved in for the first time.
   useEffect(() => {
@@ -235,6 +290,14 @@ export function IslandScreen({
           haptic('success');
           playSound('arrive');
           showBanner(`${def.name} moved in!`);
+          // The camera goes over to have a look at the newcomer, then comes back.
+          const actor = sceneRef.current.actors.find((a) => a.id === animalId);
+          if (actor && cam.current.zoom === 1) {
+            const p = trackAt(actor.track, clock.value / 1000 + actor.offset);
+            const z = 1.7;
+            moveCamera(z, (layout.cx - p.x) * z, (layout.cy - p.y) * z + layout.th, true);
+            later(2400, () => moveCamera(1, 0, 0, true));
+          }
         });
         later(i * 3400 + 700, () => playAnimal(def.sound));
       });
@@ -246,14 +309,14 @@ export function IslandScreen({
   // --- soundscape ----------------------------------------------------------
   const waterCount = useMemo(() => Object.values(world.terrain).filter((k) => k === 'water').length, [world.terrain]);
   const liveliness = Math.round(target * 10) / 10;
+  const wet = waterShown > 0.2 ? waterCount : 0;
   const applyAmbience = useCallback(() => {
-    // A wilted island is a quiet island.
-    const life = Math.max(0.12, liveliness);
-    setAmbience({
-      [night ? 'night' : 'day']: 0.55 * life,
-      water: waterCount > 0 ? Math.min(0.5, 0.18 + 0.06 * waterCount) * Math.max(0.3, liveliness) : 0,
-    });
-  }, [liveliness, night, waterCount]);
+    // The soundscape follows the weather, the season and the island's health.
+    setAmbience(soundscape({ vitality: liveliness, night, weather: atmo.weather, season: atmo.season, water: wet, frozen }));
+  }, [liveliness, night, wet, atmo.weather, atmo.season, frozen]);
+  const bleak = liveliness < 0.3 && Object.keys(world.tiles).length > 0;
+  const bleakRef = useRef(bleak);
+  bleakRef.current = bleak;
   useEffect(() => {
     if (AppState.currentState === 'active') applyAmbience();
     const sub = AppState.addEventListener('change', (state) => (state === 'active' ? applyAmbience() : stopAmbience()));
@@ -270,9 +333,14 @@ export function IslandScreen({
       timer = setTimeout(
         () => {
           const list = outRef.current;
-          if (list.length > 0 && AppState.currentState === 'active') {
-            const def = getAnimal(list[Math.floor(Math.random() * list.length)].id);
-            if (def) playAnimal(def.sound, 0.3);
+          if (AppState.currentState === 'active') {
+            if (list.length > 0) {
+              const def = getAnimal(list[Math.floor(Math.random() * list.length)].id);
+              if (def) playAnimal(def.sound, 0.3);
+            } else if (bleakRef.current && Math.random() < 0.6) {
+              // Nobody is left to sing: only a crow, somewhere.
+              playAnimal('crow', 0.28);
+            }
           }
           schedule();
         },
@@ -298,11 +366,11 @@ export function IslandScreen({
   }, [islandScale, later, showBanner]);
 
   const onCanvasPress = useCallback(
-    (e: GestureResponderEvent) => {
-      // On web a press is a mouse event, which reports offsetX / offsetY instead.
-      const ne = e.nativeEvent as typeof e.nativeEvent & { offsetX?: number; offsetY?: number };
-      const px = ne.locationX ?? ne.offsetX ?? 0;
-      const py = ne.locationY ?? ne.offsetY ?? 0;
+    (screenX: number, screenY: number) => {
+      // Undo the camera: everything below works in the island's own coordinates.
+      const c = cam.current;
+      const px = layout.cx + (screenX - layout.cx - c.x) / c.zoom;
+      const py = layout.cy + (screenY - layout.cy - c.y) / c.zoom;
       const t = clock.value;
 
       // Animals first: tapping one makes it jump and call.
@@ -317,7 +385,8 @@ export function IslandScreen({
         const lvl = bondLevel(bond?.points ?? 0);
         const young = animal.key.endsWith(':young');
         const who = young ? `${bond?.name ? `${bond.name}'s` : 'A'} little one` : bond?.name ?? def?.name ?? '';
-        setBubble({ id, text: lvl > 0 && !young ? `${who}\n${BOND_LABELS[lvl]} ${'💛'.repeat(lvl)}` : who, x: animal.x, y: animal.y });
+        const at = toScreen(animal.x, animal.y);
+        setBubble({ id, text: lvl > 0 && !young ? `${who}\n${BOND_LABELS[lvl]} ${'💛'.repeat(lvl)}` : who, x: at.x, y: at.y });
         setTimeout(() => setBubble((b) => (b?.id === id ? null : b)), 1500);
         return;
       }
@@ -350,7 +419,8 @@ export function IslandScreen({
         haptic('soft');
         playSound('crack', 0.4);
         const id = ++serial.current;
-        setBubble({ id, text: `A session withered here\nat ${formatTime(marks[key])}`, x: sx, y: sy });
+        const at = toScreen(sx, sy);
+        setBubble({ id, text: `A session withered here\nat ${formatTime(marks[key])}`, x: at.x, y: at.y });
         setTimeout(() => setBubble((b) => (b?.id === id ? null : b)), 2400);
         return;
       }
@@ -363,14 +433,15 @@ export function IslandScreen({
       if (!res.ok) return;
       const isWater = pick.type === 'nature' && pick.kind === 'water';
       setPopped(key);
-      setBurstAt((b) => ({ x: sx, y: sy, n: b.n + 1, water: isWater }));
+      const at = toScreen(sx, sy);
+      setBurstAt((b) => ({ x: at.x, y: at.y, n: b.n + 1, water: isWater }));
       burst.value = 0;
       burst.value = withTiming(1, { duration: 900, easing: Easing.out(Easing.quad) });
       haptic('medium');
       playSound(pick.type === 'seed' ? 'plant' : isWater ? 'place_water' : 'place_stone');
       if (res.islandGrew) celebrateGrowth();
     },
-    [burst, celebrateGrowth, clock, layout, marks, nature.bonds, notify, pick, placeNature, plant, poke, scene, target, tile, world.radius, world.terrain, world.tiles],
+    [burst, celebrateGrowth, clock, layout, toScreen, marks, nature.bonds, notify, pick, placeNature, plant, poke, scene, target, tile, world.radius, world.terrain, world.tiles],
   );
 
   const buyPouch = () => {
@@ -391,6 +462,66 @@ export function IslandScreen({
   };
   useEffect(() => () => setImmersive(false), [setImmersive]);
 
+  // --- touch: tap, drag, pinch ----------------------------------------------
+  const pressRef = useRef(onCanvasPress);
+  pressRef.current = onCanvasPress;
+  const gestures = useMemo(() => {
+    let start = { x: 0, y: 0, at: 0, camX: 0, camY: 0, zoom: 1, spread: 0, moved: false };
+    const spreadOf = (touches: readonly { pageX: number; pageY: number }[]) =>
+      touches.length >= 2 ? Math.hypot(touches[0].pageX - touches[1].pageX, touches[0].pageY - touches[1].pageY) : 0;
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: () => true,
+      onPanResponderGrant: (e) => {
+        const ne = e.nativeEvent as typeof e.nativeEvent & { offsetX?: number; offsetY?: number };
+        start = {
+          x: ne.locationX ?? ne.offsetX ?? ne.pageX,
+          y: ne.locationY ?? ne.offsetY ?? ne.pageY,
+          at: Date.now(),
+          camX: cam.current.x,
+          camY: cam.current.y,
+          zoom: cam.current.zoom,
+          spread: 0,
+          moved: false,
+        };
+      },
+      onPanResponderMove: (e, g) => {
+        const touches = e.nativeEvent.touches ?? [];
+        if (touches.length >= 2) {
+          const spread = spreadOf(touches);
+          if (start.spread === 0) start.spread = spread;
+          start.moved = true;
+          moveCamera(start.zoom * (spread / Math.max(1, start.spread)), start.camX + g.dx, start.camY + g.dy);
+        } else if (Math.hypot(g.dx, g.dy) > 8) {
+          start.moved = true;
+          if (cam.current.zoom > 1) moveCamera(cam.current.zoom, start.camX + g.dx, start.camY + g.dy);
+        }
+      },
+      onPanResponderRelease: () => {
+        if (!start.moved && Date.now() - start.at < 600) pressRef.current(start.x, start.y);
+        else if (cam.current.zoom < 1.08) moveCamera(1, 0, 0, true);
+      },
+      onPanResponderTerminationRequest: () => false,
+    });
+  }, [moveCamera]);
+
+  // A new island level: light sweeps across the island.
+  const levelNow = levelProgress(game.economy.lifetimeFocusMin).level;
+  useEffect(() => {
+    if (settings.lastSeenLevel === levelNow) return;
+    if (settings.lastSeenLevel > 0 && levelNow > settings.lastSeenLevel) {
+      later(700, () => {
+        sweep.value = 0;
+        sweep.value = withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.quad) });
+        playSound('cue_sweep', 0.7);
+        haptic('success');
+        showBanner(`Island level ${levelNow}`);
+      });
+    }
+    updateSettings({ lastSeenLevel: levelNow });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [levelNow]);
+
   // --- texts ---------------------------------------------------------------
   const mood = moodOf(target);
   const fadingIn = hoursUntilFading(world, now());
@@ -409,7 +540,7 @@ export function IslandScreen({
   useEffect(() => {
     if (!showNews) return;
     haptic('warning');
-    playSound('wither', 0.5);
+    playSound('cue_loss', 0.7);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showNews]);
   // One line per loss; a crowd of departures is told as one.
@@ -460,8 +591,16 @@ export function IslandScreen({
   return (
     <View style={StyleSheet.absoluteFill} testID="island-screen">
       <Canvas style={StyleSheet.absoluteFill}>
-        <Sky w={w} h={h} palette={palette} clock={clock} />
+        <Sky w={w} h={h} palette={palette} clock={clock} atmo={atmo} />
+        <Lit atmo={atmo}>
         <Island
+          atmo={atmo}
+          now={now()}
+          zoom={zoom}
+          panX={panX}
+          panY={panY}
+          sweep={sweep}
+          flood={flood}
           layout={layout}
           world={world}
           seeds={game.seeds}
@@ -477,6 +616,8 @@ export function IslandScreen({
           poppedTile={popped}
           scale={islandScale}
         />
+        </Lit>
+        <WeatherFront w={w} h={h} atmo={atmo} clock={clock} />
         <Burst
           key={burstAt.n}
           t={burst}
@@ -492,7 +633,22 @@ export function IslandScreen({
         />
       </Canvas>
 
-      <Pressable style={StyleSheet.absoluteFill} onPress={onCanvasPress} testID="island-touch" accessibilityLabel="Island" />
+      <View style={StyleSheet.absoluteFill} {...gestures.panHandlers} testID="island-touch" accessibilityLabel="Island" />
+
+      <PressableScale
+        feel="tick"
+        onPress={() => {
+          const next = cam.current.zoom < 1.3 ? 1.6 : cam.current.zoom < 2 ? 2.4 : 1;
+          moveCamera(next, next === 1 ? 0 : cam.current.x, next === 1 ? 0 : cam.current.y, true);
+        }}
+        style={[styles.zoomBtn, { bottom: insets.bottom + 206 }]}
+        testID="zoom-button"
+        accessibilityLabel="Zoom"
+      >
+        <Txt weight="black" size={13}>
+          {zoomLabel > 1 ? `${zoomLabel}×` : '🔍'}
+        </Txt>
+      </PressableScale>
 
       {bubble && (
         <Animated.View
@@ -594,8 +750,12 @@ export function IslandScreen({
                   Died in the drought
                 </Txt>
               ) : tileSeed ? (
-                <Txt weight="heavy" size={12.5} color={rarityColor[tileSeed.rarity]}>
-                  {RARITY_LABEL[tileSeed.rarity]}
+                <Txt weight="heavy" size={12.5} color={rarityColor[tileSeed.rarity]} numberOfLines={1} testID="tile-growth">
+                  {`${RARITY_LABEL[tileSeed.rarity]} · ${GROWTH_LABELS[growthStage(tileSeed.plantedAt, now())]}${
+                    growthStage(tileSeed.plantedAt, now()) < 3
+                      ? ` · ${GROWTH_LABELS[growthStage(tileSeed.plantedAt, now()) + 1].toLowerCase()} in ${Math.max(1, Math.ceil(daysToNextGrowth(tileSeed.plantedAt, now())))}d`
+                      : ''
+                  }`}
                 </Txt>
               ) : (
                 <Txt weight="bold" size={12} color={colors.inkSoft} numberOfLines={2}>
@@ -829,6 +989,16 @@ const styles = StyleSheet.create({
   },
   newsCard: { alignSelf: 'stretch', backgroundColor: colors.card, borderRadius: radius.lg, padding: 20 },
   newsRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 5 },
+  zoomBtn: {
+    position: 'absolute',
+    right: 14,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255,255,255,0.88)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   bubble: {
     position: 'absolute',
     width: 140,

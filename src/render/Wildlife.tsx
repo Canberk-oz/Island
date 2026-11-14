@@ -1,6 +1,7 @@
 import { BlurMask, Group, Oval, Path, Skia } from '@shopify/react-native-skia';
 import React, { useMemo } from 'react';
 import { useDerivedValue, type SharedValue } from 'react-native-reanimated';
+import type { Shadow } from '../game/atmosphere';
 import { PlantBody } from './PlantSprite';
 import { animalSprite } from './creatures';
 import {
@@ -35,6 +36,8 @@ interface Shared {
   vitality: SharedValue<number>;
   poke: SharedValue<Poke>;
   tileW: number;
+  /** Where the light comes from (shadows lean away from it). */
+  shade?: Shadow;
 }
 
 function presence(vitality: number, shy: number) {
@@ -42,8 +45,12 @@ function presence(vitality: number, shy: number) {
   return Math.min(1, Math.max(0, (vitality - shy) / 0.07));
 }
 
-function ActorView({ actor, clock, vitality, poke, tileW }: { actor: Actor } & Shared) {
+/** How long a startled hedgehog stays rolled up, in seconds. */
+const BALL_TIME = 2.4;
+
+function ActorView({ actor, clock, vitality, poke, tileW, shade }: { actor: Actor } & Shared) {
   const sprite = useMemo(() => animalSprite(actor.id, actor.unit), [actor.id, actor.unit]);
+  const ball = useMemo(() => (actor.id === 'hedgehog' ? animalSprite('hedgehog_ball', actor.unit) : null), [actor.id, actor.unit]);
 
   const state = useDerivedValue(() => {
     const t = clock.value / 1000;
@@ -52,25 +59,77 @@ function ActorView({ actor, clock, vitality, poke, tileW }: { actor: Actor } & S
     let squash = 0;
     // A tap makes it jump and squash, whatever it was doing.
     const since = (clock.value - poke.value.at) / 1000;
-    if (poke.value.key === actor.key && since >= 0 && since < 0.7) {
+    const poked = poke.value.key === actor.key && since >= 0;
+    const rolled = ball != null && poked && since < BALL_TIME ? 1 : 0;
+    if (poked && since < 0.7 && !rolled) {
       const k = since / 0.7;
       lift += Math.sin(Math.PI * k) * actor.unit * 0.35;
       squash = Math.sin(Math.PI * k * 2) * 0.18 * (1 - k);
     }
-    const breathe = Math.sin(t * 2.2 + actor.offset) * 0.025;
+    // Asleep, breathing is slow and deep.
+    const asleep = actor.kind === 'sleep';
+    const breathe = Math.sin(t * (asleep ? 1.1 : 2.2) + actor.offset) * (asleep ? 0.05 : 0.025);
     // Ducks bob on the water.
     const bob = actor.kind === 'duck' ? Math.sin(t * 2 + actor.offset) * actor.unit * 0.012 : 0;
-    return { x: s.x, y: s.y, lift: lift + bob, dir: s.dir, moving: s.moving, sx: 1 + squash - breathe * 0.5, sy: 1 - squash + breathe };
+    // Head down: a deer drinks, a rabbit nibbles in little bursts.
+    let tilt = 0;
+    if (!s.moving && !rolled) {
+      if (s.bow) tilt = 0.26 + Math.sin(t * 1.3) * 0.03;
+      else if (actor.idle === 'nibble' && Math.sin(t * 0.55 + actor.offset) > 0.1) tilt = 0.16 + Math.sin(t * 11) * 0.05;
+    }
+    return {
+      x: s.x,
+      y: s.y,
+      lift: lift + bob,
+      dir: s.dir,
+      moving: s.moving,
+      sx: 1 + squash - breathe * 0.5,
+      sy: 1 - squash + breathe,
+      tilt,
+      rolled,
+    };
   });
 
   const transform = useDerivedValue(() => {
     const s = state.value;
-    return [{ translateX: s.x }, { translateY: s.y - s.lift }, { scaleX: s.dir * s.sx }, { scaleY: s.sy }];
+    return [{ translateX: s.x }, { translateY: s.y - s.lift }, { scaleX: s.dir * s.sx }, { scaleY: s.sy }, { rotate: s.tilt }];
+  });
+  const bodyOpacity = useDerivedValue(() => 1 - state.value.rolled);
+  const ballOpacity = useDerivedValue(() => state.value.rolled);
+  // A swimming duck leaves a wake.
+  const wake = useDerivedValue(() => {
+    const b = Skia.PathBuilder.Make();
+    if (actor.kind !== 'duck') return b.build();
+    const s = state.value;
+    const t = clock.value / 1000;
+    for (let i = 0; i < 2; i++) {
+      const f = (t * 0.7 + i * 0.5 + actor.offset) % 1;
+      const r = actor.unit * (0.16 + f * 0.3) * (s.moving ? 1 : 0.6);
+      b.addOval({ x: s.x - s.dir * actor.unit * 0.12 - r, y: s.y - r * 0.32, width: r * 2, height: r * 0.64 });
+    }
+    return b.build();
+  });
+  const wakeOpacity = useDerivedValue(() => 0.2 + 0.35 * state.value.moving);
+  // Zzz drifts up from a sleeper.
+  const zzz = useDerivedValue(() => {
+    const b = Skia.PathBuilder.Make();
+    if (actor.kind !== 'sleep') return b.build();
+    const s = state.value;
+    const t = clock.value / 1000;
+    for (let i = 0; i < 3; i++) {
+      const f = (t * 0.28 + i / 3) % 1;
+      const z = actor.unit * (0.045 + f * 0.05);
+      const x = s.x + actor.unit * (0.2 + f * 0.22) + Math.sin(t + i) * 2;
+      const y = s.y - actor.unit * (0.3 + f * 0.55);
+      b.moveTo(x - z, y - z).lineTo(x + z, y - z).lineTo(x - z, y + z).lineTo(x + z, y + z);
+    }
+    return b.build();
   });
   const shadow = useDerivedValue(() => {
     const s = state.value;
     const k = 1 / (1 + s.lift / (actor.unit * 0.5));
-    return [{ translateX: s.x }, { translateY: s.y }, { scale: k }];
+    const lean = shade ? shade.dx * (0.3 + (shade.length - 1) * 0.5) * actor.unit * 0.4 : 0;
+    return [{ translateX: s.x + lean }, { translateY: s.y }, { scaleX: k * (shade ? 1 + (shade.length - 1) * 0.5 : 1) }, { scaleY: k }];
   });
   const z = useDerivedValue(() => {
     const s = state.value;
@@ -84,15 +143,22 @@ function ActorView({ actor, clock, vitality, poke, tileW }: { actor: Actor } & S
   const fold = useDerivedValue(() => 1 - flap.value);
 
   if (!sprite) return null;
-  const grounded = actor.kind === 'walk';
+  const grounded = actor.kind === 'walk' || actor.kind === 'sleep';
   return (
     <Group zIndex={z} opacity={opacity}>
+      {actor.kind === 'duck' && <Path path={wake} color="#FFFFFF" style="stroke" strokeWidth={1.2} opacity={wakeOpacity} />}
+      {actor.kind === 'sleep' && <Path path={zzz} color="#FFFFFF" style="stroke" strokeWidth={1.6} strokeCap="round" strokeJoin="round" opacity={0.85} />}
       {grounded && (
         <Group transform={shadow}>
           <Oval x={-sprite.width * 0.42} y={-sprite.width * 0.09} width={sprite.width * 0.84} height={sprite.width * 0.18} color="#12301F" opacity={0.18} />
         </Group>
       )}
-      <Group transform={transform}>
+      {ball && (
+        <Group transform={transform} opacity={ballOpacity}>
+          <PlantBody parts={ball.parts} />
+        </Group>
+      )}
+      <Group transform={transform} opacity={bodyOpacity}>
         <PlantBody parts={sprite.parts} />
         {sprite.rest && (
           <Group opacity={fold}>

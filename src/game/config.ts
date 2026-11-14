@@ -59,9 +59,12 @@ export const CONFIG = {
 
   world: {
     startRadius: 1,
-    maxRadius: 4,
+    maxRadius: 5,
     /** The island grows once this fraction of its tiles is planted. */
     expandAtFill: 0.7,
+    /** A plant grows up where it stands: sprout, young (after a day), mature (4 days), ancient (30 days). */
+    growthAfterHours: [0, 24, 96, 720] as readonly number[],
+    growthScale: [0.62, 0.82, 1, 1.14] as readonly number[],
   },
 
   ring: {

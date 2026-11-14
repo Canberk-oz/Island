@@ -37,12 +37,23 @@ const SOURCES = {
   animal_hoot: require('../../assets/sounds/animal_hoot.wav'),
   animal_twinkle: require('../../assets/sounds/animal_twinkle.wav'),
   animal_flutter: require('../../assets/sounds/animal_flutter.wav'),
+  animal_crow: require('../../assets/sounds/animal_crow.wav'),
+  cue_friend: require('../../assets/sounds/cue_friend.wav'),
+  cue_return: require('../../assets/sounds/cue_return.wav'),
+  cue_loss: require('../../assets/sounds/cue_loss.wav'),
+  cue_revival: require('../../assets/sounds/cue_revival.wav'),
+  cue_landmark: require('../../assets/sounds/cue_landmark.wav'),
+  cue_born: require('../../assets/sounds/cue_born.wav'),
+  cue_sweep: require('../../assets/sounds/cue_sweep.wav'),
 } as const;
 
 const AMBIENCE = {
   day: require('../../assets/sounds/amb_day.wav'),
   night: require('../../assets/sounds/amb_night.wav'),
   water: require('../../assets/sounds/amb_water.wav'),
+  rain: require('../../assets/sounds/amb_rain.wav'),
+  wind: require('../../assets/sounds/amb_wind.wav'),
+  leaves: require('../../assets/sounds/amb_leaves.wav'),
 } as const;
 
 export type AmbienceName = keyof typeof AMBIENCE;
@@ -177,4 +188,53 @@ export function setAmbience(levels: Partial<Record<AmbienceName, number>>) {
 
 export function stopAmbience() {
   setAmbience({});
+}
+
+/** The short musical phrase for something that happened on the island. */
+const NEWS_CUE: Record<string, SoundName> = {
+  questDone: 'cue_revival',
+  landmark: 'cue_landmark',
+  rebuilt: 'cue_landmark',
+  born: 'cue_born',
+  returned: 'cue_return',
+  befriended: 'cue_friend',
+  left: 'cue_loss',
+  died: 'cue_loss',
+  ruined: 'cue_loss',
+};
+
+/** Play one cue for a batch of island news: the most important one wins. */
+export function playNewsCue(kinds: readonly string[], volume = 0.8): boolean {
+  for (const kind of Object.keys(NEWS_CUE)) {
+    if (kinds.includes(kind)) {
+      playSound(NEWS_CUE[kind], volume);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The island's soundscape for a moment: which beds play and how loud.
+ * `gain` scales everything (quiet while focusing).
+ */
+export function soundscape(
+  opts: { vitality: number; night: boolean; weather: string; season: string; water: number; frozen?: boolean },
+  gain = 1,
+): Partial<Record<AmbienceName, number>> {
+  const v = Math.round(opts.vitality * 10) / 10;
+  // A wilted island is a quiet island: the birds thin out long before the wind does.
+  const life = Math.max(0, (v - 0.15) / 0.85);
+  const raining = opts.weather === 'rain';
+  const levels: Partial<Record<AmbienceName, number>> = {};
+  const bed = opts.night ? 'night' : 'day';
+  levels[bed] = 0.55 * life * (raining ? 0.35 : opts.season === 'winter' ? 0.5 : 1) * gain;
+  if (opts.water > 0 && !opts.frozen) levels.water = Math.min(0.5, 0.18 + 0.06 * opts.water) * Math.max(0.2, v) * gain;
+  if (raining) levels.rain = 0.5 * gain;
+  // Wind for winter, for snow, and for an island with nothing left to say.
+  const bleak = v < 0.3 ? 0.4 * (1 - v / 0.3) : 0;
+  const cold = opts.season === 'winter' || opts.weather === 'snow' ? 0.3 : 0;
+  if (bleak + cold > 0) levels.wind = Math.min(0.5, bleak + cold) * gain;
+  if (opts.season === 'autumn' && !raining) levels.leaves = 0.28 * Math.max(0.3, life) * gain;
+  return levels;
 }

@@ -422,7 +422,7 @@ describe('world', () => {
     expect(plantsUntilExpansion(state.world)).toBe(7);
     let at = T0;
     let grew = 0;
-    for (let radius = 1; radius <= 4; radius++) {
+    for (let radius = 1; radius <= CONFIG.world.maxRadius; radius++) {
       for (const t of tilesInRadius(radius)) {
         if (state.world.tiles[t.key]) continue;
         state = runSession(state, 10, at, at % 9973).state;
@@ -434,9 +434,9 @@ describe('world', () => {
         state = res.state;
       }
     }
-    expect(grew).toBe(3);
-    expect(state.world.radius).toBe(CONFIG.world.maxRadius);
-    expect(Object.keys(state.world.tiles)).toHaveLength(69);
+    expect(grew).toBe(CONFIG.world.maxRadius - 1);
+    expect(state.world.radius).toBe(5);
+    expect(Object.keys(state.world.tiles)).toHaveLength(97);
     expect(plantsUntilExpansion(state.world)).toBe(0);
   });
 });

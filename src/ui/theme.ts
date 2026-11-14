@@ -54,19 +54,63 @@ export interface SkyPalette {
   dark: boolean;
 }
 
-const SKIES: Record<'dawn' | 'day' | 'dusk' | 'night', SkyPalette> = {
+const SKIES: Record<'dawn' | 'day' | 'golden' | 'dusk' | 'night', SkyPalette> = {
   dawn: { top: '#9EC9F0', mid: '#F9D9C0', bottom: '#FCEBD3', sun: '#FFD9A0', cloud: '#FFFFFF', dark: false },
   day: { top: '#8FD0F5', mid: '#C8ECF8', bottom: '#F3F8E4', sun: '#FFF2B8', cloud: '#FFFFFF', dark: false },
-  dusk: { top: '#7C8FD9', mid: '#F2A99A', bottom: '#FCD9A8', sun: '#FFC27A', cloud: '#FFE9DD', dark: false },
+  golden: { top: '#8DB6E6', mid: '#FAD59A', bottom: '#FDE8BC', sun: '#FFCB6B', cloud: '#FFF3DF', dark: false },
+  dusk: { top: '#7C8FD9', mid: '#F2A99A', bottom: '#FCD9A8', sun: '#FFB870', cloud: '#FFE9DD', dark: false },
   night: { top: '#14213D', mid: '#243B63', bottom: '#3D5A80', sun: '#F4F1DE', cloud: '#8FA6C9', dark: true },
 };
 
+/** The sky at these hours; in between, the colours blend. */
+const SKY_KEYS: [number, SkyPalette][] = [
+  [0, SKIES.night],
+  [4.6, SKIES.night],
+  [6.2, SKIES.dawn],
+  [8.5, SKIES.day],
+  [15.5, SKIES.day],
+  [17.5, SKIES.golden],
+  [19.2, SKIES.dusk],
+  [20.6, SKIES.night],
+  [24, SKIES.night],
+];
+
+/** What an overcast sky does to the colours. */
+const WEATHER_WASH: Record<string, [string, number]> = {
+  rain: ['#8FA3B3', 0.5],
+  snow: ['#D5DFE6', 0.45],
+  haze: ['#CFC8AE', 0.4],
+  fog: ['#BFC3BF', 0.62],
+};
+
+/** The sky for a local hour (fractions welcome) and the weather. */
+export function skyAt(hour: number, weather = 'clear'): SkyPalette {
+  const h = ((hour % 24) + 24) % 24;
+  let i = 0;
+  while (i < SKY_KEYS.length - 2 && h >= SKY_KEYS[i + 1][0]) i++;
+  const [h0, a] = SKY_KEYS[i];
+  const [h1, b] = SKY_KEYS[i + 1];
+  const t = h1 === h0 ? 0 : (h - h0) / (h1 - h0);
+  const mix = (k: 'top' | 'mid' | 'bottom' | 'sun' | 'cloud') => mixHex(a[k], b[k], t);
+  let sky: SkyPalette = { top: mix('top'), mid: mix('mid'), bottom: mix('bottom'), sun: mix('sun'), cloud: mix('cloud'), dark: h < 5.4 || h >= 20 };
+  const wash = WEATHER_WASH[weather];
+  if (wash) {
+    const [grey, amount] = wash;
+    const dim = sky.dark ? darken(grey, 0.6) : grey;
+    sky = {
+      ...sky,
+      top: mixHex(sky.top, dim, amount),
+      mid: mixHex(sky.mid, dim, amount * 0.9),
+      bottom: mixHex(sky.bottom, dim, amount * 0.7),
+      cloud: mixHex(sky.cloud, sky.dark ? '#5C6B80' : '#C3CCD3', amount),
+    };
+  }
+  return sky;
+}
+
 /** The sky follows the local time of day. */
 export function skyForHour(hour: number): SkyPalette {
-  if (hour >= 5 && hour < 8) return SKIES.dawn;
-  if (hour >= 8 && hour < 17) return SKIES.day;
-  if (hour >= 17 && hour < 20) return SKIES.dusk;
-  return SKIES.night;
+  return skyAt(hour);
 }
 
 /** Springs and timings shared by the whole app, so everything moves alike. */

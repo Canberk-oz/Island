@@ -75,7 +75,8 @@ export function plantSeed(state: GameState, seedId: string, x: number, y: number
     state: {
       ...state,
       world,
-      seeds: { ...state.seeds, [seedId]: { ...seed, tile: key, plantedAt: now } },
+      // A plant that is moved keeps its age: only the first planting starts the clock.
+      seeds: { ...state.seeds, [seedId]: { ...seed, tile: key, plantedAt: seed.plantedAt ?? now } },
     },
   };
 }
@@ -96,7 +97,7 @@ export function digUp(state: GameState, x: number, y: number): GameState {
     seeds = { ...state.seeds };
     delete seeds[seedId];
   } else if (seed) {
-    seeds = { ...state.seeds, [seedId]: { ...seed, tile: null, plantedAt: null } };
+    seeds = { ...state.seeds, [seedId]: { ...seed, tile: null } };
   }
   return { ...state, world: { ...state.world, tiles }, seeds };
 }
@@ -106,4 +107,25 @@ export function unplantedSeeds(state: GameState) {
   return Object.values(state.seeds)
     .filter((s) => s.tile == null)
     .sort((a, b) => b.earnedAt - a.earnedAt);
+}
+
+export const GROWTH_LABELS = ['Sprout', 'Young', 'Mature', 'Ancient'] as const;
+
+/** How grown a plant is (0 sprout .. 3 ancient), from the time since it was first planted. */
+export function growthStage(plantedAt: number | null, now: number): number {
+  if (plantedAt == null) return 0;
+  const hours = (now - plantedAt) / 3_600_000;
+  let stage = 0;
+  CONFIG.world.growthAfterHours.forEach((h, i) => {
+    if (hours >= h) stage = i;
+  });
+  return stage;
+}
+
+/** Days until the plant reaches its next stage (0 when it is ancient). */
+export function daysToNextGrowth(plantedAt: number | null, now: number): number {
+  const stage = growthStage(plantedAt, now);
+  const next = CONFIG.world.growthAfterHours[stage + 1];
+  if (next == null || plantedAt == null) return 0;
+  return Math.max(0, (plantedAt + next * 3_600_000 - now) / 86_400_000);
 }

@@ -1,4 +1,4 @@
-import { Canvas, ColorMatrix, Group, Paint } from '@shopify/react-native-skia';
+import { BlurMask, Canvas, Circle, ColorMatrix, Group, Paint } from '@shopify/react-native-skia';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
@@ -27,7 +27,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { haptic } from '../feel/haptics';
-import { playSound, type SoundName } from '../feel/sound';
+import { playNewsCue, playSound, setAmbience, soundscape, stopAmbience, type SoundName } from '../feel/sound';
 import { CONFIG } from '../game/config';
 import { maxStake, wagerPayout } from '../game/economy';
 import { gracesLeft, sessionProgress } from '../game/engine';
@@ -37,14 +37,20 @@ import { dayIndex, dayKey, formatClock, formatMinutes } from '../game/time';
 import type { CompletionSummary, WitherSummary } from '../game/types';
 import { Sapling, saplingTip, wiltMatrix } from '../render/Sapling';
 import { useClockMs } from '../render/clock';
-import { Hill, Sky } from '../render/scene';
+import { Hill, Lit, Sky, WeatherFront } from '../render/scene';
+import { Island, layoutIsland } from '../render/Island';
+import { Passerby } from '../render/Passerby';
+import { useAtmosphere } from '../render/useAtmosphere';
+import { buildWildlife, EMPTY_SCENE } from '../render/wildlife';
+import { vitalityNow } from '../game/decay';
+import { islandResidents, waterLevel } from '../game/stakes';
 import { IslandStatus } from '../ui/IslandStatus';
 import { newsText } from '../ui/stakesText';
 import type { NewsItem } from '../game/types';
 import { useStore } from '../store/store';
 import { Ring } from '../ui/Ring';
 import { Button, CoinIcon, Pill, PressableScale, Txt } from '../ui/kit';
-import { colors, motion, radius, skyForHour } from '../ui/theme';
+import { colors, motion, radius } from '../ui/theme';
 import { grantText } from './IslandScreen';
 import { SeedReveal } from './SeedReveal';
 
@@ -72,7 +78,10 @@ export function FocusScreen({ onPlant }: { onPlant: (seedId: string) => void }) 
   const now = useStore((s) => s.now);
   const dismissResult = useStore((s) => s.dismissResult);
 
-  const palette = useMemo(() => skyForHour(new Date(now()).getHours()), [now, active, result]);
+  const { atmo, palette } = useAtmosphere();
+  const game = useStore((s) => s.game);
+  const focusAmbience = useStore((s) => s.settings.focusAmbience);
+  const soundOn = useStore((s) => s.settings.sound);
   const [dimmed, setDimmed] = useState(false);
   const clock = useClockMs(!dimmed);
 
@@ -242,15 +251,124 @@ export function FocusScreen({ onPlant }: { onPlant: (seedId: string) => void }) 
     setDimmed(false);
   }, [idle, appear, stage]);
 
+  // --- the island in the distance -------------------------------------------
+  // While a session runs, the island it is for floats behind the sapling.
+  const busy = !!active || !!result;
+  const world = game.world;
+  const hasIsland = Object.keys(world.tiles).length + Object.keys(world.terrain).length > 0;
+  const far = useMemo(() => layoutIsland(world.radius, w / 2, h * 0.43, w * 0.5, h * 0.17), [world.radius, w, h]);
+  const islandVitality = useSharedValue(vitalityNow(world, now()));
+  const out = useMemo(
+    () => (busy ? islandResidents(game, now()).filter((r) => r.present) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [busy, world.tiles, world.terrain, game.nature.away, game.nature.family],
+  );
+  const farScene = useMemo(
+    () => (busy && hasIsland ? buildWildlife(far, world, game.seeds, out, atmo.night, atmo.hour, atmo.season === 'winter') : EMPTY_SCENE),
+    [busy, hasIsland, far, world, game.seeds, out, atmo.night, atmo.hour, atmo.season],
+  );
+  const ruined = useMemo(() => Object.entries(game.nature.landmarks).filter(([, m]) => m?.ruined).map(([k]) => k), [game.nature.landmarks]);
+  useEffect(() => {
+    islandVitality.value = withTiming(vitalityNow(world, now()), { duration: 1600, easing: Easing.inOut(Easing.cubic) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [world.vitality, world.vitalityAt, busy]);
+  const farOpacity = useDerivedValue(() => stage.value * 0.92);
+  const farScale = useSharedValue(1);
+  // The finished sapling sends a spark of itself up to the island.
+  const fly = useSharedValue(0);
+  useEffect(() => {
+    if (result?.kind !== 'completed' || !hasIsland) return;
+    fly.value = 0;
+    fly.value = withDelay(420, withTiming(1, { duration: 560, easing: Easing.inOut(Easing.cubic) }));
+    const id = setTimeout(() => {
+      farScale.value = withSequence(withTiming(1.12, { duration: 110, easing: Easing.out(Easing.quad) }), withSpring(1, motion.pop));
+    }, 960);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultId]);
+  const spark = useDerivedValue(() => {
+    const k = fly.value;
+    const x0 = w / 2 + tip.x;
+    const y0 = baseY + tip.y;
+    return [{ translateX: x0 + (far.cx - x0) * k }, { translateY: y0 + (far.cy - y0) * k - Math.sin(Math.PI * k) * h * 0.06 }, { scale: 1 - k * 0.55 }];
+  });
+  const sparkOpacity = useDerivedValue(() => (fly.value <= 0.01 || fly.value >= 0.99 ? 0 : 1));
+
+  // The crest of the hill, for whoever walks across it.
+  const crestAt = useCallback(
+    (x: number) => {
+      const b = h * 0.6;
+      const u = Math.min(0.999, Math.abs((x - w * 0.5) / (w * 0.8)));
+      return baseY - 18 + b - b * Math.sqrt(1 - u * u) + 3;
+    },
+    [baseY, h, w],
+  );
+  const passers = useMemo(() => out.map((r) => r.id), [out]);
+
+  // The island's soundscape, quietly, while a session runs.
+  const waterTiles = useMemo(() => Object.values(world.terrain).filter((k) => k === 'water').length, [world.terrain]);
+  useEffect(() => {
+    if (!active || !focusAmbience || !hasIsland) return;
+    const apply = () =>
+      setAmbience(
+        soundscape(
+          {
+            vitality: vitalityNow(world, now()),
+            night: atmo.night,
+            weather: atmo.weather,
+            season: atmo.season,
+            water: waterLevel(useStore.getState().game, now()) > 0.2 ? waterTiles : 0,
+            frozen: atmo.season === 'winter',
+          },
+          0.4,
+        ),
+      );
+    if (AppState.currentState === 'active') apply();
+    const sub = AppState.addEventListener('change', (state) => (state === 'active' ? apply() : stopAmbience()));
+    return () => {
+      sub.remove();
+      stopAmbience();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, focusAmbience, soundOn, atmo.night, atmo.weather, atmo.season, waterTiles, hasIsland]);
+
+  // What the session won back gets its own little phrase, after the fanfare.
+  useEffect(() => {
+    if (result?.kind !== 'completed') return;
+    const kinds = result.summary.news.map((n) => n.kind);
+    const id = setTimeout(() => playNewsCue(kinds, 0.7), 2600);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resultId]);
+
   const hillShift = useDerivedValue(() => [{ translateY: (1 - stage.value) * h * 0.16 }]);
   const matrix = useDerivedValue(() => wiltMatrix(wilt.value));
   const withering = result?.kind === 'withered';
 
   const scene = (
     <>
-      <Sky w={w} h={h} palette={palette} clock={clock} />
+      <Sky w={w} h={h} palette={palette} clock={clock} atmo={atmo} />
+      <Lit atmo={atmo}>
+      {busy && hasIsland && (
+        <Group opacity={farOpacity}>
+          <Island
+            layout={far}
+            world={world}
+            seeds={game.seeds}
+            scene={farScene}
+            vitality={islandVitality}
+            clock={clock}
+            atmo={atmo}
+            now={now()}
+            waterLevel={waterLevel(game, now())}
+            ruined={ruined}
+            scale={farScale}
+          />
+        </Group>
+      )}
       <Group transform={hillShift}>
-        <Hill w={w} h={h} crestY={baseY - 18} dark={palette.dark} />
+        <Hill w={w} h={h} crestY={baseY - 18} dark={false} season={atmo.season} />
+        {!!active && <Passerby ids={passers} w={w} groundY={crestAt} unit={Math.min(w * 0.16, 70)} clock={clock} />}
         <Sapling
           x={w / 2}
           y={baseY}
@@ -264,6 +382,14 @@ export function FocusScreen({ onPlant }: { onPlant: (seedId: string) => void }) 
           clock={clock}
         />
       </Group>
+      </Lit>
+      <Group transform={spark} opacity={sparkOpacity}>
+        <Circle cx={0} cy={0} r={26} color="#FFF6C9" opacity={0.7}>
+          <BlurMask blur={14} style="normal" />
+        </Circle>
+        <Circle cx={0} cy={0} r={9} color="#FFFFFF" />
+      </Group>
+      <WeatherFront w={w} h={h} atmo={atmo} clock={clock} />
     </>
   );
 

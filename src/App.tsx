@@ -29,7 +29,8 @@ import { JournalScreen } from './screens/JournalScreen';
 import { ShareCard } from './screens/ShareCard';
 import { useStore } from './store/store';
 import { PressableScale, Txt } from './ui/kit';
-import { colors, motion, radius, skyForHour } from './ui/theme';
+import { colors, motion, radius, skyAt } from './ui/theme';
+import { hourAt } from './game/atmosphere';
 
 type Tab = 'focus' | 'island' | 'journal';
 
@@ -174,7 +175,7 @@ function Root() {
 
   // A running session or its result always owns the screen.
   const now = useStore((s) => s.now);
-  const night = skyForHour(new Date(now()).getHours()).dark;
+  const night = skyAt(hourAt(now())).dark;
   const inSession = !!active || !!result;
   const shown: Tab = inSession ? 'focus' : tab;
 

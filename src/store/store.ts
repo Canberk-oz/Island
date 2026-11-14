@@ -18,6 +18,7 @@ import { vitalityNow } from '../game/decay';
 import { residentContext, revivePlant, syncLandmarks } from '../game/stakes';
 import { dayIndex } from '../game/time';
 import type { TerrainKind } from '../game/types';
+import type { Season, Weather } from '../game/atmosphere';
 import { digUp, growIsland, plantSeed } from '../game/world';
 
 const STORAGE_KEY = 'grove/save/v1';
@@ -33,6 +34,15 @@ export interface Settings {
   /** Vitality the island showed last time it was on screen (drives the fade / revive animation). */
   lastSeenVitality: number;
   onboarded: boolean;
+  /** Seasons follow the southern hemisphere. */
+  south: boolean;
+  /** Play the island's soundscape quietly during a session. */
+  focusAmbience: boolean;
+  /** Island level the player last saw on the island (drives the level-up moment). */
+  lastSeenLevel: number;
+  /** Developer: force a season or a kind of weather. */
+  seasonOverride: Season | null;
+  weatherOverride: Weather | null;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -44,6 +54,11 @@ const DEFAULT_SETTINGS: Settings = {
   lastDurationMin: 25,
   lastSeenVitality: 1,
   onboarded: false,
+  south: false,
+  focusAmbience: true,
+  lastSeenLevel: 0,
+  seasonOverride: null,
+  weatherOverride: null,
 };
 
 export type SessionResult =

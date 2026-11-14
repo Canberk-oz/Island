@@ -4,6 +4,7 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { haptic } from '../feel/haptics';
 import { setUpNotifications } from '../feel/notify';
+import { SEASONS } from '../game/atmosphere';
 import { CONFIG } from '../game/config';
 import { ANIMALS, TERRAIN_INFO, levelProgress } from '../game/nature';
 import { BOND_LABELS, bondLevel, daysToNextBond, landmarkRebuildStreak, stumps } from '../game/stakes';
@@ -481,6 +482,8 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
               if (v) void setUpNotifications();
             }}
           />
+          <Toggle label="Island sounds while focusing" value={settings.focusAmbience} onChange={(v) => updateSettings({ focusAmbience: v })} />
+          <Toggle label="Southern hemisphere seasons" value={settings.south} onChange={(v) => updateSettings({ south: v })} />
           <Toggle label="Developer tools" value={settings.devTools} onChange={(v) => updateSettings({ devTools: v })} />
         </Card>
 
@@ -499,6 +502,30 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
             <View style={styles.devRow}>
               <Button label="+100 coins" tone="ghost" onPress={() => devAddCoins(100)} style={styles.devBtn} testID="dev-coins" feel="light" />
               <Button label="+2h focus" tone="ghost" onPress={() => devAddFocus(120)} style={styles.devBtn} testID="dev-focus" feel="light" />
+            </View>
+            <View style={styles.devRow}>
+              <Button
+                label={`Season: ${settings.seasonOverride ?? 'calendar'}`}
+                tone="ghost"
+                onPress={() => {
+                  const order = [null, ...SEASONS];
+                  updateSettings({ seasonOverride: order[(order.indexOf(settings.seasonOverride) + 1) % order.length] });
+                }}
+                style={styles.devBtn}
+                testID="dev-season"
+                feel="light"
+              />
+              <Button
+                label={`Weather: ${settings.weatherOverride ?? 'real'}`}
+                tone="ghost"
+                onPress={() => {
+                  const order = [null, 'clear', 'rain', 'rainbow', 'snow', 'haze', 'fog'] as const;
+                  updateSettings({ weatherOverride: order[(order.indexOf(settings.weatherOverride) + 1) % order.length] });
+                }}
+                style={styles.devBtn}
+                testID="dev-weather"
+                feel="light"
+              />
             </View>
             <View style={styles.devRow}>
               <Button label="+7 streak days" tone="ghost" onPress={() => devAddStreak(7)} style={styles.devBtn} testID="dev-streak" feel="light" />

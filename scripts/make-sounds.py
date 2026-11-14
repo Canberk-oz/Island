@@ -461,6 +461,115 @@ def main_wildlife():
     SR = full
 
 
+def crow():
+    """Three hoarse caws: the only voice left on a wilted island."""
+    def caw(seconds=0.3, f0=560.0, f1=430.0):
+        n = int(SR * seconds)
+        t = np.arange(n) / SR
+        tone = saw(np.linspace(f0, f1, n))
+        rough = 0.6 + 0.4 * np.sign(np.sin(2 * np.pi * 70 * t))
+        return norm(band(tone * rough, 700, 2800)) * ramp(n, 0.02, 0.09)
+    return mix((0, caw(), 1.0), (0.42, caw(0.28, 540, 420), 0.9), (0.84, caw(0.36, 520, 390), 0.8))
+
+
+def rain(seconds=12.0):
+    total = seconds + 1.0
+    hiss = norm(band(white(total), 1800, 7000)) * (0.8 + 0.2 * norm(np.abs(band(white(total), 0.2, 1.2))))
+    patter = norm(band(white(total), 500, 1600))
+    layers = [(0, hiss, 0.2), (0, patter, 0.09)]
+    for _ in range(160):
+        f = 1400 + 2600 * rng.random()
+        layers.append((rng.random() * seconds, sweep(f, f * 0.8, 0.015 + 0.02 * rng.random(), decay=30), 0.03 + 0.07 * rng.random()))
+    return loop(mix(*layers)[: int(SR * total)])
+
+
+def cold_wind(seconds=14.0):
+    total = seconds + 1.0
+    n = int(SR * total)
+    t = np.arange(n) / SR
+    body = wind(total, 300, 1300)
+    # a thin whistle that rises and falls with the gusts
+    gust = 0.5 + 0.5 * np.sin(2 * np.pi * t / 7.0)
+    whistle = norm(band(white(total), 950, 1250)) * gust ** 3
+    return loop(mix((0, body, 0.22), (0, whistle, 0.07))[:n])
+
+
+def rustle(seconds=12.0):
+    total = seconds + 1.0
+    n = int(SR * total)
+    t = np.arange(n) / SR
+    env = np.clip(0.25 + 0.5 * np.sin(2 * np.pi * t / 4.1) + 0.35 * np.sin(2 * np.pi * t / 2.3 + 1.0), 0.05, 1.0)
+    leaves = norm(band(white(total), 2200, 6500)) * env
+    crackle = norm(band(white(total), 3000, 7000)) * (np.abs(band(white(total), 6, 25)) > 0.012) * env
+    return loop(mix((0, leaves, 0.16), (0, crackle, 0.05), (0, wind(total, 300, 900), 0.08))[:n])
+
+
+def main_seasons():
+    """Weather, the voice of neglect, and the short musical cues of the island."""
+    write("animal_crow", crow(), 0.5)
+
+    # A friendship: two warm notes that settle on a chord.
+    write("cue_friend", mix(
+        (0.00, pluck(NOTE["E5"], 0.9, 4.5), 0.9),
+        (0.16, pluck(NOTE["G5"], 0.9, 4.5), 0.9),
+        (0.34, chord(["C5", "E5", "C6"], 1.6, 2.6, 0.03), 1.0),
+        (0.34, shimmer(1.0), 0.35),
+    ), 0.62)
+    # Someone came back: a quick, glad run upward.
+    write("cue_return", mix(
+        (0.00, pluck(NOTE["C5"], 0.5, 8), 0.8),
+        (0.09, pluck(NOTE["E5"], 0.5, 8), 0.8),
+        (0.18, pluck(NOTE["G5"], 0.6, 7), 0.85),
+        (0.27, pluck(NOTE["C6"], 0.9, 5), 0.9),
+        (0.40, pluck(NOTE["E6"], 1.3, 3.5), 0.9),
+        (0.40, shimmer(1.1), 0.45),
+    ), 0.62)
+    # A loss: three slow notes falling, left unresolved.
+    write("cue_loss", mix(
+        (0.00, pluck(NOTE["A5"], 1.4, 3.0, 0.2), 0.8),
+        (0.42, pluck(NOTE["E5"], 1.5, 2.8, 0.2), 0.8),
+        (0.90, pluck(NOTE["D5"], 2.2, 2.0, 0.2), 0.9),
+        (0.90, pluck(NOTE["F4"] * 2, 2.2, 2.0, 0.15), 0.5),
+    ), 0.5)
+    # The revival is complete: a small fanfare.
+    write("cue_revival", mix(
+        (0.00, chord(["C5", "G5"], 0.9, 4.0, 0.04), 0.9),
+        (0.28, chord(["D5", "A5"], 0.9, 4.0, 0.04), 0.9),
+        (0.56, chord(["E5", "G5", "C6"], 1.2, 3.0, 0.05), 1.0),
+        (0.95, chord(["G5", "C6", "E6", "G6"], 2.4, 1.9, 0.07), 1.0),
+        (0.95, shimmer(1.9), 0.8),
+    ), 0.7)
+    # A landmark stands: broad and steady.
+    write("cue_landmark", mix(
+        (0.00, chord(["C5", "G5", "C6"], 1.6, 2.6, 0.02), 1.0),
+        (0.55, chord(["D5", "G5", "D6"], 1.6, 2.6, 0.02), 0.95),
+        (1.10, chord(["E5", "G5", "C6", "E6"], 2.6, 1.8, 0.04), 1.0),
+        (1.10, shimmer(1.6), 0.5),
+    ), 0.68)
+    # A young one: a few notes from a music box.
+    write("cue_born", mix(*[
+        (i * 0.13, pluck(NOTE[n], 0.7, 7, 0.15), 0.8) for i, n in enumerate(["E6", "G6", "C7", "G6", "E6", "C7"])
+    ]), 0.5)
+    # The light sweeps over the island on a new level.
+    write("cue_sweep", mix(
+        (0.0, shimmer(1.4), 0.9),
+        (0.1, sweep(900, 2600, 0.9, decay=2.5), 0.12),
+    ), 0.45)
+
+    global SR
+    full = SR
+    SR = 22050
+    write("amb_rain", rain(), 0.5, fade_out=False)
+    write("amb_wind", cold_wind(), 0.5, fade_out=False)
+    write("amb_leaves", rustle(), 0.5, fade_out=False)
+    SR = full
+
+
 if __name__ == "__main__":
-    main()
-    main_wildlife()
+    import sys
+    if "seasons" in sys.argv:
+        main_seasons()
+    else:
+        main()
+        main_wildlife()
+        main_seasons()

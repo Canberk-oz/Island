@@ -65,7 +65,7 @@ interface IconProps {
 function iconParts({ speciesId, terrain, animal, size }: Pick<IconProps, 'speciesId' | 'terrain' | 'animal' | 'size'>): PlantPart[] {
   if (terrain) {
     const s = terrainSprite(terrain, size * 1.05);
-    return [...s.parts, ...(s.alt ?? [])];
+    return [...s.parts, ...(s.spin?.parts ?? []), ...(s.alt ?? [])];
   }
   if (animal) {
     // Measure at a reference size, then fit the animal into the icon.

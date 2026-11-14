@@ -1,7 +1,8 @@
 import { Skia, type SkPath } from '@shopify/react-native-skia';
 import { mulberry32, hashString } from '../game/rng';
 import { getSpecies, type Species } from '../game/species';
-import { darken, lighten, wilted } from '../ui/theme';
+import type { Season } from '../game/atmosphere';
+import { darken, lighten, mixHex, wilted } from '../ui/theme';
 
 /**
  * Every plant is drawn procedurally from a handful of filled or stroked paths.
@@ -152,7 +153,7 @@ function fern(s: Species, u: number): PlantPart[] {
   return parts;
 }
 
-function tree(s: Species, u: number): PlantPart[] {
+function tree(s: Species, u: number, season: Season): PlantPart[] {
   const h = u * s.size;
   const parts: PlantPart[] = [];
   const trunkH = h * 0.5;
@@ -187,8 +188,18 @@ function tree(s: Species, u: number): PlantPart[] {
   parts.push(part(shade.build(), darken(s.primary, 0.16)));
   parts.push(part(crown.build(), s.primary));
 
+  if (season === 'winter' && !s.glow) {
+    // Snow lies on the top of the crown.
+    const snow = pb();
+    for (let i = 0; i < 4; i++) {
+      const x = (i - 1.5) * crownR * 0.42;
+      snow.addCircle(x, cy - crownR * (0.62 - Math.abs(i - 1.5) * 0.14), crownR * 0.34);
+    }
+    parts.push(part(snow.build(), '#FFFFFF', { opacity: 0.95 }));
+  }
+
   const dots = pb();
-  for (let i = 0; i < 9; i++) {
+  for (let i = 0; i < (season === 'spring' ? 18 : season === 'winter' ? 4 : 9); i++) {
     const a = rand() * Math.PI * 2;
     const d = Math.sqrt(rand()) * crownR * 0.95;
     dots.addCircle(Math.cos(a) * d, cy + Math.sin(a) * d * 0.75, crownR * (0.07 + rand() * 0.06));
@@ -197,7 +208,7 @@ function tree(s: Species, u: number): PlantPart[] {
   return parts;
 }
 
-function pine(s: Species, u: number): PlantPart[] {
+function pine(s: Species, u: number, season: Season): PlantPart[] {
   const h = u * s.size;
   const parts: PlantPart[] = [];
   const tw = u * 0.09;
@@ -210,10 +221,16 @@ function pine(s: Species, u: number): PlantPart[] {
     const top = base - (h * 0.92) / tiers - h * 0.08;
     const half = u * 0.42 * (1 - i * 0.22);
     dark.moveTo(-half, base).lineTo(0, top).lineTo(half, base).close();
-    light.moveTo(-half * 0.1, base).lineTo(0, top).lineTo(half, base).close();
+    if (season === 'winter') {
+      // A cap of snow on every tier.
+      const mid = base + (top - base) * 0.45;
+      light.moveTo(-half * 0.55, mid).lineTo(0, top).lineTo(half * 0.55, mid).quadTo(0, mid + h * 0.05, -half * 0.55, mid).close();
+    } else {
+      light.moveTo(-half * 0.1, base).lineTo(0, top).lineTo(half, base).close();
+    }
   }
   parts.push(part(dark.build(), s.primary));
-  parts.push(part(light.build(), s.accent, { opacity: 0.55 }));
+  parts.push(part(light.build(), season === 'winter' ? '#FFFFFF' : s.accent, { opacity: season === 'winter' ? 0.95 : 0.55 }));
   return parts;
 }
 
@@ -319,7 +336,24 @@ function crystal(s: Species, u: number): PlantPart[] {
   return parts;
 }
 
-const BUILDERS: Record<Species['kind'], (s: Species, u: number) => PlantPart[]> = {
+const AUTUMN = ['#E8842C', '#D9542B', '#E3B23C'];
+
+/** The colours a species wears in a season. Legendary plants and crystals do not care about the weather. */
+function inSeason(s: Species, season: Season): Species {
+  if (season === 'summer' || s.glow || s.kind === 'crystal' || s.kind === 'cactus' || s.kind === 'mushroom') return s;
+  if (s.kind === 'tree') {
+    if (season === 'autumn') return { ...s, primary: mixHex(s.primary, AUTUMN[hashString(s.id) % 3], 0.7), accent: '#FFD166' };
+    if (season === 'winter') return { ...s, primary: mixHex(s.primary, '#DCE6EA', 0.55), accent: '#FFFFFF' };
+    return { ...s, primary: lighten(s.primary, 0.08), accent: mixHex(s.accent, '#FFE3EE', 0.6) };
+  }
+  if (s.kind === 'pine') return s;
+  // Flowers and ferns: straw-coloured in autumn, frosted in winter, a touch brighter in spring.
+  if (season === 'autumn') return { ...s, stem: mixHex(s.stem, '#B59A3A', 0.35), primary: s.kind === 'fern' ? mixHex(s.primary, '#C9A227', 0.4) : s.primary };
+  if (season === 'winter') return { ...s, stem: mixHex(s.stem, '#C9D6D2', 0.4), primary: mixHex(s.primary, '#E6EEF2', 0.3), accent: mixHex(s.accent, '#E6EEF2', 0.25) };
+  return { ...s, primary: lighten(s.primary, 0.05) };
+}
+
+const BUILDERS: Record<Species['kind'], (s: Species, u: number, season: Season) => PlantPart[]> = {
   flower,
   fern,
   tree,
@@ -332,14 +366,14 @@ const BUILDERS: Record<Species['kind'], (s: Species, u: number) => PlantPart[]> 
 const cache = new Map<string, PlantSpriteData>();
 
 /** Build (and cache) the sprite of a species at a given unit size. */
-export function plantSprite(speciesId: string, unit: number): PlantSpriteData {
+export function plantSprite(speciesId: string, unit: number, season: Season = 'summer'): PlantSpriteData {
   const u = Math.round(unit * 2) / 2;
-  const key = `${speciesId}@${u}`;
+  const key = `${speciesId}@${u}:${season}`;
   let data = cache.get(key);
   if (!data) {
     const s = getSpecies(speciesId);
     const wide = s.kind === 'tree' ? 0.36 * s.size : s.kind === 'pine' ? 0.42 : 0.4;
-    data = { parts: BUILDERS[s.kind](s, u), height: u * s.size * 1.15, halfWidth: u * wide };
+    data = { parts: BUILDERS[s.kind](inSeason(s, season), u, season), height: u * s.size * 1.15, halfWidth: u * wide };
     cache.set(key, data);
   }
   return data;

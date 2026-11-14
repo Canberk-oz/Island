@@ -1,5 +1,5 @@
 import { getAnimal, waterBodies, type Resident } from '../game/nature';
-import { hashString, mulberry32 } from '../game/rng';
+import { hash01, hashString, mulberry32 } from '../game/rng';
 import { getSpecies } from '../game/species';
 import type { Rand, Seed, World } from '../game/types';
 import { isTileInRadius, parseTile, tileKey, tilesInRadius } from '../game/world';
@@ -33,12 +33,18 @@ export interface Track {
   /** Time at which it arrives at point i + 1. */
   arrive: number[];
   period: number;
+  /** Per point: how high above the ground the actor sits there (a squirrel up a tree). */
+  lifts?: number[];
+  /** Per point: 1 where it bows its head while it waits (a deer drinking). */
+  bows?: number[];
 }
 
 export interface Actor {
   key: string;
   id: string;
-  kind: 'walk' | 'bird' | 'duck' | 'perch';
+  kind: 'walk' | 'bird' | 'duck' | 'perch' | 'sleep';
+  /** What it does while it waits: a rabbit nibbles. */
+  idle?: 'nibble';
   track: Track;
   /** Seconds added to the clock so that actors do not move in step. */
   offset: number;
@@ -79,6 +85,30 @@ export interface WildlifeScene {
   swarms: Swarm[];
 }
 
+/** Where the lily pads of a water tile float (the frog lands on the first one). */
+export function padSpots(l: IsoLayout, key: string): { x: number; y: number; r: number; bloom: boolean }[] {
+  const { x, y } = parseTile(key);
+  const sx = l.cx + ((x - y) * l.tw) / 2;
+  const sy = l.cy + ((x + y) * l.th) / 2;
+  const rand = mulberry32(hashString(`pads${key}`));
+  const out = [];
+  const n = 1 + Math.floor(rand() * 2);
+  for (let i = 0; i < n; i++) {
+    out.push({
+      x: sx + (rand() - 0.5) * l.tw * 0.36,
+      y: sy + l.th * 0.16 + (rand() - 0.5) * l.th * 0.3,
+      r: l.tw * (0.085 + rand() * 0.035),
+      bloom: rand() < 0.4,
+    });
+  }
+  return out;
+}
+
+/** Water tiles that carry lily pads (the frog's stepping stones). */
+export function padTiles(terrain: Record<string, string>): Set<string> {
+  return new Set(Object.keys(terrain).filter((k) => terrain[k] === 'water' && hash01(`pad${k}`) < 0.5));
+}
+
 export const EMPTY_SCENE: WildlifeScene = { actors: [], fish: null, swarms: [] };
 
 const WALKERS: Record<string, { speed: number; wait: [number, number]; hop: number; hopsPerTile: number; scale: number }> = {
@@ -106,7 +136,12 @@ function screen(l: IsoLayout, x: number, y: number) {
 }
 
 /** Turn a list of points into a closed, timed track (there and back again). */
-function makeTrack(points: { x: number; y: number }[], pxPerSec: number, wait: [number, number], rand: Rand): Track {
+function makeTrack(
+  points: { x: number; y: number; lift?: number; bow?: number }[],
+  pxPerSec: number,
+  wait: [number, number],
+  rand: Rand,
+): Track {
   const loop = points.length > 1 ? [...points, ...points.slice(1, -1).reverse(), points[0]] : [points[0], points[0]];
   const leave: number[] = [];
   const arrive: number[] = [];
@@ -118,7 +153,10 @@ function makeTrack(points: { x: number; y: number }[], pxPerSec: number, wait: [
     t += Math.max(0.3, d / Math.max(1, pxPerSec));
     arrive.push(t);
   }
-  return { xs: loop.map((p) => p.x), ys: loop.map((p) => p.y), leave, arrive, period: t };
+  const track: Track = { xs: loop.map((p) => p.x), ys: loop.map((p) => p.y), leave, arrive, period: t };
+  if (loop.some((p) => p.lift)) track.lifts = loop.map((p) => p.lift ?? 0);
+  if (loop.some((p) => p.bow)) track.bows = loop.map((p) => p.bow ?? 0);
+  return track;
 }
 
 export interface TrackState {
@@ -132,6 +170,10 @@ export interface TrackState {
   dir: number;
   /** Length of the current segment in pixels. */
   dist: number;
+  /** Height above the ground from the track itself, in pixels. */
+  perch: number;
+  /** 1 while it waits at a point where it bows its head. */
+  bow: number;
 }
 
 export function trackAt(tr: Track, time: number): TrackState {
@@ -147,7 +189,7 @@ export function trackAt(tr: Track, time: number): TrackState {
       if (tt <= tr.leave[i]) {
         // Waiting: keep looking the way it came from.
         const px = tr.xs[i === 0 ? n - 1 : i - 1];
-        return { x: ax, y: ay, moving: 0, k: 0, dir: ax >= px ? 1 : -1, dist: 0 };
+        return { x: ax, y: ay, moving: 0, k: 0, dir: ax >= px ? 1 : -1, dist: 0, perch: tr.lifts ? tr.lifts[i] : 0, bow: tr.bows ? tr.bows[i] : 0 };
       }
       const k = (tt - tr.leave[i]) / (tr.arrive[i] - tr.leave[i]);
       const e = k * k * (3 - 2 * k);
@@ -158,21 +200,23 @@ export function trackAt(tr: Track, time: number): TrackState {
         k,
         dir: bx >= ax ? 1 : -1,
         dist: Math.sqrt((bx - ax) * (bx - ax) + (by - ay) * (by - ay)),
+        perch: tr.lifts ? tr.lifts[i] + (tr.lifts[i + 1] - tr.lifts[i]) * e : 0,
+        bow: 0,
       };
     }
   }
-  return { x: tr.xs[0], y: tr.ys[0], moving: 0, k: 0, dir: 1, dist: 0 };
+  return { x: tr.xs[0], y: tr.ys[0], moving: 0, k: 0, dir: 1, dist: 0, perch: 0, bow: 0 };
 }
 
 /** How far above its track point an actor is right now (hops, flight arcs), in pixels. */
 export function liftOf(actor: Actor, s: TrackState, tileW: number): number {
   'worklet';
-  if (!s.moving) return 0;
+  if (!s.moving) return s.perch;
   if (actor.kind === 'bird') return Math.sin(Math.PI * s.k) * Math.min(tileW * 0.9, s.dist * 0.25);
-  if (actor.hop <= 0) return 0;
+  if (actor.hop <= 0) return s.perch;
   const hops = Math.max(1, Math.round((s.dist / tileW) * actor.hopsPerTile));
   const f = s.k * hops;
-  return Math.abs(Math.sin(Math.PI * f)) * actor.hop;
+  return s.perch + Math.abs(Math.sin(Math.PI * f)) * actor.hop;
 }
 
 export function swarmAt(sw: Swarm, i: number, time: number) {
@@ -220,6 +264,10 @@ export function buildWildlife(
   seeds: Record<string, Seed>,
   residents: Resident[],
   night: boolean,
+  /** Local hour: some animals keep a schedule. */
+  hour = 9,
+  /** Winter: the ponds are frozen and the lily pads are gone. */
+  frozen = false,
 ): WildlifeScene {
   if (residents.length === 0) return EMPTY_SCENE;
 
@@ -244,6 +292,13 @@ export function buildWildlife(
       return STEPS.some(([dx, dy]) => isWater(tileKey(x + dx, y + dy)));
     }),
   );
+
+  const pads = frozen ? new Set<string>() : padTiles(world.terrain);
+  const frogLand = new Set([...nearWater, ...[...pads].filter((k) => isTileInRadius(parseTile(k).x, parseTile(k).y, world.radius))]);
+  const treeBeside = (key: string) => {
+    const { x, y } = parseTile(key);
+    return STEPS.map(([dx, dy]) => tileKey(x + dx, y + dy)).find((k) => ['tree', 'pine'].includes(kindOf(k) ?? ''));
+  };
 
   const plantTop = (key: string) => {
     const { x, y } = parseTile(key);
@@ -307,15 +362,58 @@ export function buildWildlife(
     const walker = WALKERS[r.id];
 
     if (walker) {
-      const area = r.id === 'frog' && nearWater.size > 0 ? nearWater : walkable;
+      const area = r.id === 'frog' && frogLand.size > 0 ? frogLand : walkable;
+
+      // The fox sleeps through the middle of the day, curled up by its log.
+      if (r.id === 'fox' && hour >= 11 && hour < 15) {
+        const logs = tiles.filter((t) => world.terrain[t.key] === 'log');
+        const beside = logs
+          .flatMap((t) => STEPS.map(([dx, dy]) => tileKey(t.x + dx, t.y + dy)))
+          .filter((k) => walkable.has(k))
+          .sort();
+        const spot = beside[0] ?? [...walkable].sort()[0];
+        if (spot) {
+          const p = standOn(spot, rand);
+          actors.push({
+            key: 'fox:0',
+            id: 'fox_sleep',
+            kind: 'sleep',
+            track: makeTrack([p], 1, [30, 30], rand),
+            offset: 0,
+            unit: l.unit * walker.scale,
+            hop: 0,
+            hopsPerTile: 0,
+            shy: def.shy,
+          });
+          continue;
+        }
+      }
+
       for (let i = 0; i < r.count; i++) {
         const route = wander(area, rand, r.id === 'frog' ? 6 : 12);
         if (!route) break;
-        const points = route.map((key) => standOn(key, rand));
+        const points: { x: number; y: number; lift?: number; bow?: number }[] = route.map((key, step) => {
+          if (r.id === 'frog' && pads.has(key)) {
+            // Out on a lily pad.
+            const pad = padSpots(l, key)[0];
+            return { x: pad.x, y: pad.y };
+          }
+          const p = standOn(key, rand);
+          // A deer lowers its head to drink where it stands by the water.
+          if (r.id === 'deer' && nearWater.has(key)) return { ...p, bow: 1 };
+          // A squirrel runs up the tree it passes.
+          const tree = r.id === 'squirrel' && step % 2 === 1 ? treeBeside(key) : undefined;
+          if (tree) {
+            const top = plantTop(tree);
+            return { x: top.x + l.tw * 0.04, y: top.base + l.th * 0.1, lift: (top.base - top.y) * 0.62 };
+          }
+          return p;
+        });
         actors.push({
           key: `${r.id}:${i}`,
           id: r.id,
           kind: 'walk',
+          idle: r.id === 'rabbit' ? 'nibble' : undefined,
           track: makeTrack(points, walker.speed * l.tw, walker.wait, rand),
           offset: rand() * 40,
           unit: l.unit * walker.scale,
@@ -362,7 +460,10 @@ export function buildWildlife(
     }
 
     if (r.id === 'owl' && trees.length > 0) {
-      const p = plantTop(trees[Math.floor(rand() * trees.length)]);
+      // The owl likes the hollow log; without one it takes a tree.
+      const log = tiles.find((t) => world.terrain[t.key] === 'log');
+      const onLog = log ? screen(l, log.x, log.y) : null;
+      const p = onLog ? { x: onLog.sx - l.unit * 0.1, y: onLog.sy - l.unit * 0.22 } : plantTop(trees[Math.floor(rand() * trees.length)]);
       actors.push({
         key: 'owl:0',
         id: 'owl',
@@ -508,8 +609,8 @@ export function hitWildlife(scene: WildlifeScene, time: number, px: number, py: 
     if (vitality < a.shy) continue;
     const s = trackAt(a.track, time + a.offset);
     const lift = liftOf(a, s, l.tw);
-    const half = (a.id === 'deer' ? 0.55 : 0.28) * a.unit;
-    consider(a.id, a.key, s.x, s.y - lift - half, Math.max(22, a.unit * 0.55));
+    const half = (a.id === 'deer' ? 0.55 : a.kind === 'sleep' ? 0.12 : 0.28) * a.unit;
+    consider(a.kind === 'sleep' ? 'fox' : a.id, a.key, s.x, s.y - lift - half, Math.max(22, a.unit * 0.55));
   }
   for (const sw of scene.swarms) {
     if (vitality < sw.shy) continue;
