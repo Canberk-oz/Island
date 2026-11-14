@@ -1,4 +1,5 @@
 import { getAnimal, waterBodies, type Resident } from '../game/nature';
+import { getVisitor } from '../game/visitors';
 import { hash01, hashString, mulberry32 } from '../game/rng';
 import { getSpecies } from '../game/species';
 import type { Rand, Seed, World } from '../game/types';
@@ -118,6 +119,8 @@ const WALKERS: Record<string, { speed: number; wait: [number, number]; hop: numb
   fox: { speed: 0.75, wait: [2, 6], hop: 0.03, hopsPerTile: 3, scale: 1.2 },
   deer: { speed: 0.5, wait: [3, 8], hop: 0.03, hopsPerTile: 2.5, scale: 1.25 },
   frog: { speed: 2.4, wait: [3, 9], hop: 0.34, hopsPerTile: 1, scale: 1.05 },
+  // A wading visitor: slow, stately, mostly standing.
+  wader: { speed: 0.3, wait: [4, 10], hop: 0, hopsPerTile: 0, scale: 1.3 },
 };
 
 const STEPS = [
@@ -355,14 +358,18 @@ export function buildWildlife(
   };
 
   for (const r of residents) {
-    const def = getAnimal(r.id);
+    // A daily visitor moves like one of the residents but wears its own sprite.
+    const visitor = getVisitor(r.id);
+    const id = visitor ? visitor.like : r.id;
+    const def = getAnimal(id) ?? (visitor ? { shy: 0, nocturnal: false } : undefined);
     if (!def) continue;
     if (def.nocturnal && !night) continue;
     const rand = mulberry32(hashString(`${r.id}:${world.radius}:${Object.keys(world.tiles).length}`));
-    const walker = WALKERS[r.id];
+    const walker = WALKERS[id];
+    const shy = visitor ? 0 : def.shy;
 
     if (walker) {
-      const area = r.id === 'frog' && frogLand.size > 0 ? frogLand : walkable;
+      const area = id === 'frog' && frogLand.size > 0 ? frogLand : id === 'wader' && nearWater.size > 0 ? nearWater : walkable;
 
       // The fox sleeps through the middle of the day, curled up by its log.
       if (r.id === 'fox' && hour >= 11 && hour < 15) {
@@ -383,26 +390,26 @@ export function buildWildlife(
             unit: l.unit * walker.scale,
             hop: 0,
             hopsPerTile: 0,
-            shy: def.shy,
+            shy,
           });
           continue;
         }
       }
 
       for (let i = 0; i < r.count; i++) {
-        const route = wander(area, rand, r.id === 'frog' ? 6 : 12);
+        const route = wander(area, rand, id === 'frog' ? 6 : 12);
         if (!route) break;
         const points: { x: number; y: number; lift?: number; bow?: number }[] = route.map((key, step) => {
-          if (r.id === 'frog' && pads.has(key)) {
+          if (id === 'frog' && pads.has(key)) {
             // Out on a lily pad.
             const pad = padSpots(l, key)[0];
             return { x: pad.x, y: pad.y };
           }
           const p = standOn(key, rand);
           // A deer lowers its head to drink where it stands by the water.
-          if (r.id === 'deer' && nearWater.has(key)) return { ...p, bow: 1 };
+          if (id === 'deer' && nearWater.has(key)) return { ...p, bow: 1 };
           // A squirrel runs up the tree it passes.
-          const tree = r.id === 'squirrel' && step % 2 === 1 ? treeBeside(key) : undefined;
+          const tree = id === 'squirrel' && step % 2 === 1 ? treeBeside(key) : undefined;
           if (tree) {
             const top = plantTop(tree);
             return { x: top.x + l.tw * 0.04, y: top.base + l.th * 0.1, lift: (top.base - top.y) * 0.62 };
@@ -413,20 +420,20 @@ export function buildWildlife(
           key: `${r.id}:${i}`,
           id: r.id,
           kind: 'walk',
-          idle: r.id === 'rabbit' ? 'nibble' : undefined,
+          idle: id === 'rabbit' ? 'nibble' : undefined,
           track: makeTrack(points, walker.speed * l.tw, walker.wait, rand),
           offset: rand() * 40,
           unit: l.unit * walker.scale,
           hop: walker.hop * l.unit,
           hopsPerTile: walker.hopsPerTile,
-          shy: def.shy,
+          shy,
         });
       }
-      addYoung(r.id, walker.scale);
+      if (!visitor) addYoung(r.id, walker.scale);
       continue;
     }
 
-    if (r.id === 'bird' && trees.length > 0) {
+    if (id === 'bird' && trees.length > 0) {
       const perches = trees.map(plantTop);
       // With a single tree, birds fly out over the sea and come back.
       const sky = [
@@ -445,21 +452,21 @@ export function buildWildlife(
           if (perches.length === 1) stops.push(sky[k % 2]);
         }
         actors.push({
-          key: `bird:${i}`,
-          id: 'bird',
+          key: `${r.id}:${i}`,
+          id: r.id,
           kind: 'bird',
           track: makeTrack(stops, 2.6 * l.tw, [3, 9], rand),
           offset: rand() * 40,
           unit: l.unit * 1.2,
           hop: 0,
           hopsPerTile: 0,
-          shy: def.shy,
+          shy,
         });
       }
       continue;
     }
 
-    if (r.id === 'owl' && trees.length > 0) {
+    if (id === 'owl' && trees.length > 0) {
       // The owl likes the hollow log; without one it takes a tree.
       const log = tiles.find((t) => world.terrain[t.key] === 'log');
       const onLog = log ? screen(l, log.x, log.y) : null;
@@ -473,21 +480,21 @@ export function buildWildlife(
         unit: l.unit * 1.15,
         hop: 0,
         hopsPerTile: 0,
-        shy: def.shy,
+        shy,
       });
       continue;
     }
 
-    if (r.id === 'duck' || r.id === 'fish') {
+    if (id === 'duck' || id === 'fish') {
       const bodies = waterBodies(world).sort((a, b) => b.tiles.length - a.tiles.length);
       const lake = bodies[0];
       if (!lake) continue;
-      if (r.id === 'fish') {
+      if (id === 'fish') {
         const pts = lake.tiles.map((k) => {
           const { x, y } = parseTile(k);
           return screen(l, x, y);
         });
-        fish = { xs: pts.map((p) => p.sx), ys: pts.map((p) => p.sy + l.th * 0.12), count: r.count, unit: l.unit * 1.05, shy: def.shy };
+        fish = { xs: pts.map((p) => p.sx), ys: pts.map((p) => p.sy + l.th * 0.12), count: r.count, unit: l.unit * 1.05, shy };
         continue;
       }
       const water = new Set(lake.tiles);
@@ -500,22 +507,22 @@ export function buildWildlife(
           return { x: sx + (rand() - 0.5) * l.tw * 0.3, y: sy + l.th * 0.14 + (rand() - 0.5) * l.th * 0.2 };
         });
         actors.push({
-          key: `duck:${i}`,
-          id: 'duck',
+          key: `${r.id}:${i}`,
+          id: r.id,
           kind: 'duck',
           track: makeTrack(points, 0.32 * l.tw, [1, 4], rand),
           offset: rand() * 40,
           unit: l.unit * 1.1,
           hop: 0,
           hopsPerTile: 0,
-          shy: def.shy,
+          shy,
         });
       }
-      addYoung('duck', 1.1);
+      if (!visitor) addYoung('duck', 1.1);
       continue;
     }
 
-    if (r.id === 'butterfly' && flowers.length > 0) {
+    if (id === 'butterfly' && flowers.length > 0) {
       const tops = flowers.map(plantTop);
       swarms.push({
         id: 'butterfly',
@@ -527,12 +534,12 @@ export function buildWildlife(
         dwell: 6,
         seed: rand() * 10,
         size: l.unit * 0.14,
-        shy: def.shy,
+        shy,
       });
       continue;
     }
 
-    if (r.id === 'bee') {
+    if (id === 'bee') {
       const hives = tiles.filter((t) => world.terrain[t.key] === 'hive');
       const tops = flowers.map(plantTop);
       const anchors = [
@@ -553,12 +560,12 @@ export function buildWildlife(
         dwell: 4,
         seed: rand() * 10,
         size: l.unit * 0.06,
-        shy: def.shy,
+        shy,
       });
       continue;
     }
 
-    if (r.id === 'firefly') {
+    if (id === 'firefly') {
       const spots = tiles
         .filter((t) => isWater(t.key) || world.tiles[t.key])
         .map((t) => {
@@ -576,7 +583,7 @@ export function buildWildlife(
         dwell: 9,
         seed: rand() * 10,
         size: l.unit * 0.055,
-        shy: def.shy,
+        shy,
       });
     }
   }

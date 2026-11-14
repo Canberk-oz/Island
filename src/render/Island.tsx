@@ -501,6 +501,7 @@ interface PlantProps {
   /** How hard the wind blows (1 = a calm day). */
   wind: number;
   speciesId: string;
+  variant?: string | null;
   unit: number;
   sx: number;
   sy: number;
@@ -513,8 +514,8 @@ interface PlantProps {
 
 const BAND = CONFIG.decay.wiltBand;
 
-function IslandPlant({ speciesId, unit, sx, sy, threshold, phase, vitality, clock, popIn, season, grown, shade, wind }: PlantProps) {
-  const sprite = useMemo(() => plantSprite(speciesId, unit * grown, season), [speciesId, unit, grown, season]);
+function IslandPlant({ speciesId, variant, unit, sx, sy, threshold, phase, vitality, clock, popIn, season, grown, shade, wind }: PlantProps) {
+  const sprite = useMemo(() => plantSprite(speciesId, unit * grown, season, variant ?? null), [speciesId, unit, grown, season, variant]);
   const pop = useSharedValue(popIn ? 0 : 1);
   useEffect(() => {
     if (popIn) pop.value = withSpring(1, motion.pop);
@@ -736,6 +737,7 @@ export function Island({
             grown: CONFIG.world.growthScale[stage >= 0 ? stage : growthStage(seed.plantedAt, now!)],
             tall: ['tree', 'pine'].includes(getSpecies(seed.speciesId).kind),
             speciesId: seed.speciesId,
+            variant: seed.variant ?? null,
             sx,
             sy: sy + l.th * 0.08,
             threshold: wiltThreshold(t.key, world.radius, seed.rarity),
@@ -825,6 +827,7 @@ export function Island({
         <IslandPlant
           key={`${p.key}:${p.speciesId}`}
           speciesId={p.speciesId}
+          variant={p.variant}
           unit={l.unit}
           sx={p.sx}
           sy={p.sy}

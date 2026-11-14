@@ -21,6 +21,8 @@ import { TERRAIN_INFO, getAnimal, levelProgress, residents } from '../game/natur
 import { hashString } from '../game/rng';
 import { BOND_LABELS, bondLevel, residentContext, stumps, threats, unseenNews, waterLevel, witherMarks } from '../game/stakes';
 import { formatTime, newsText, newsTone, threatLevel, threatText } from '../ui/stakesText';
+import { TIER_LABEL, getVariant } from '../game/variants';
+import { getVisitor, visitorHere, visitorResident } from '../game/visitors';
 import { RARITY_LABEL, getSpecies } from '../game/species';
 import { RARITIES, TERRAIN_KINDS, type Seed, type TerrainKind } from '../game/types';
 import { formatMinutes } from '../game/time';
@@ -243,8 +245,9 @@ export function IslandScreen({
   const markKeys = useMemo(() => Object.keys(marks), [marks]);
   const dayPart = atmo.hour >= 11 && atmo.hour < 15 ? 'noon' : 'other';
   const scene = useMemo(
-    () => buildWildlife(layout, world, game.seeds, habitat, night, dayPart === 'noon' ? 12 : 9, frozen),
-    [layout, world, game.seeds, habitat, night, dayPart, frozen],
+    () => buildWildlife(layout, world, game.seeds, [...habitat, ...visitorResident(game, now())], night, dayPart === 'noon' ? 12 : 9, frozen),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [layout, world, game.seeds, habitat, nature.visitor, night, dayPart, frozen],
   );
   /** Screen position of a point on the island, through the camera. */
   const toScreen = useCallback(
@@ -377,9 +380,18 @@ export function IslandScreen({
       const animal = hitWildlife(scene, t / 1000, px, py, target, layout);
       if (animal) {
         const def = getAnimal(animal.id);
+        const guest = getVisitor(animal.id);
         poke.value = { key: animal.key, at: t, x: animal.x, y: animal.y };
         haptic('light');
         if (def) playAnimal(def.sound);
+        if (guest) {
+          playAnimal(guest.sound);
+          const at = toScreen(animal.x, animal.y);
+          const id = ++serial.current;
+          setBubble({ id, text: `${guest.name}\nvisiting today`, x: at.x, y: at.y });
+          setTimeout(() => setBubble((b) => (b?.id === id ? null : b)), 1800);
+          return;
+        }
         const id = ++serial.current;
         const bond = nature.bonds[animal.id];
         const lvl = bondLevel(bond?.points ?? 0);
@@ -426,7 +438,7 @@ export function IslandScreen({
       }
       if (!pick) {
         haptic('soft');
-        notify('info', 'Finish a focus session to earn a seed.');
+        notify('info', `Focus ${CONFIG.rewards.minSeedMin}+ minutes in one go to earn a seed.`);
         return;
       }
       const res = pick.type === 'seed' ? plant(pick.id, hit.x, hit.y) : placeNature(pick.kind, hit.x, hit.y);
@@ -505,6 +517,27 @@ export function IslandScreen({
     });
   }, [moveCamera]);
 
+  // Today's visitor gets a welcome the first time the island is looked at.
+  const guestId = visitorHere(game, now());
+  useEffect(() => {
+    const guest = getVisitor(guestId);
+    if (!guest || settings.lastVisitorSeen === `${guestId}:${nature.visitor?.day}`) return;
+    updateSettings({ lastVisitorSeen: `${guestId}:${nature.visitor?.day}` });
+    later(1400, () => {
+      haptic('success');
+      playSound('arrive', 0.8);
+      showBanner(`${nature.visitors[guest.id] === 1 ? 'A new visitor' : 'Visiting today'}: the ${guest.name}`);
+      const actor = sceneRef.current.actors.find((a) => a.id === guest.id);
+      if (actor && cam.current.zoom === 1) {
+        const p = trackAt(actor.track, clock.value / 1000 + actor.offset);
+        moveCamera(1.7, (layout.cx - p.x) * 1.7, (layout.cy - p.y) * 1.7 + layout.th, true);
+        later(2600, () => moveCamera(1, 0, 0, true));
+      }
+      later(600, () => playAnimal(guest.sound));
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [guestId]);
+
   // A new island level: light sweeps across the island.
   const levelNow = levelProgress(game.economy.lifetimeFocusMin).level;
   useEffect(() => {
@@ -554,7 +587,7 @@ export function IslandScreen({
   }, [fresh]);
   const moodDetail =
     world.graceUntil == null
-      ? 'Finish a session to earn your first seed'
+      ? 'Plant your first seed, then focus to keep it alive'
       : next && next.kind !== 'fade'
         ? threatText(next, now())
         : fadingIn > 0
@@ -580,6 +613,7 @@ export function IslandScreen({
   const tileSeed = tile && world.tiles[tile] ? game.seeds[world.tiles[tile]] : null;
   const tileNature = tile ? world.terrain[tile] : undefined;
   const tileDead = !!tileSeed && tileSeed.diedAt != null;
+  const tileVariant = getVariant(tileSeed?.variant);
   const pickedSeed = pick?.type === 'seed' ? game.seeds[pick.id] : null;
   const pickedKind = pick?.type === 'nature' ? pick.kind : null;
 
@@ -739,12 +773,17 @@ export function IslandScreen({
         {tileSeed || tileNature ? (
           <Animated.View entering={FadeIn.duration(180)} style={styles.trayCard} testID="tile-card">
             <View style={[styles.iconWell, { backgroundColor: tileSeed ? rarityTint[tileSeed.rarity] : '#E3F2FB' }]}>
-              {tileSeed ? <PlantIcon speciesId={tileSeed.speciesId} size={52} silhouette={tileDead} /> : <PlantIcon terrain={tileNature} size={52} />}
+              {tileSeed ? <PlantIcon speciesId={tileSeed.speciesId} variant={tileSeed.variant} size={52} silhouette={tileDead} /> : <PlantIcon terrain={tileNature} size={52} />}
             </View>
             <View style={{ flex: 1, marginLeft: 12 }}>
               <Txt weight="black" size={17}>
                 {tileSeed ? getSpecies(tileSeed.speciesId).name : TERRAIN_INFO[tileNature!].name}
               </Txt>
+              {tileVariant && !tileDead && (
+                <Txt weight="heavy" size={11.5} color={colors.coinDark} numberOfLines={2} testID="tile-variant">
+                  {`${tileVariant.name} · ${TIER_LABEL[tileVariant.tier]} variant`}
+                </Txt>
+              )}
               {tileDead ? (
                 <Txt weight="bold" size={12} color="#A4512F" numberOfLines={2}>
                   Died in the drought
@@ -877,7 +916,7 @@ export function IslandScreen({
                     Nothing to place right now
                   </Txt>
                   <Txt weight="bold" size={12} color={colors.inkFaint}>
-                    Every finished session drops a seed
+                    {`A session of ${CONFIG.rewards.minSeedMin}+ minutes drops a seed`}
                   </Txt>
                 </View>
               ) : (
@@ -889,6 +928,8 @@ export function IslandScreen({
         <Txt weight="heavy" size={12.5} color={ink} center style={{ marginTop: 6, opacity: 0.8 }} testID="tray-hint">
           {tileDead
             ? 'Your next session revives one plant, or pay coins now'
+            : tileVariant
+            ? tileVariant.tell
             : tileSeed || tileNature
             ? 'Move puts it back in your tray'
             : pickedSeed

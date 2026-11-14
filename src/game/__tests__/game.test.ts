@@ -404,7 +404,7 @@ describe('world', () => {
     state = planted.state;
     expect(state.world.tiles['0,0']).toBe(seed.id);
     expect(state.seeds[seed.id].tile).toBe('0,0');
-    expect(unplantedSeeds(state)).toHaveLength(0);
+    expect(unplantedSeeds(state).map((x) => x.id)).toEqual(['starter']);
     expect(plantSeed(state, seed.id, 1, 0, T0)).toEqual({ ok: false, reason: 'alreadyPlanted' });
 
     const second = runSession(state, 25, T0 + HOUR_MS, 2).state;
@@ -425,7 +425,7 @@ describe('world', () => {
     for (let radius = 1; radius <= CONFIG.world.maxRadius; radius++) {
       for (const t of tilesInRadius(radius)) {
         if (state.world.tiles[t.key]) continue;
-        state = runSession(state, 10, at, at % 9973).state;
+        state = runSession(state, 20, at, at % 9973).state;
         at += HOUR_MS;
         const seed = unplantedSeeds(state)[0];
         const res = plantSeed(state, seed.id, t.x, t.y, at);
@@ -537,7 +537,7 @@ describe('session', () => {
     expect(back.state.economy.coins).toBe(0);
     expect(back.state.active).toBeNull();
     expect(back.state.sessions.at(-1)?.outcome).toBe('withered');
-    expect(Object.keys(back.state.seeds)).toHaveLength(0);
+    expect(Object.keys(back.state.seeds)).toEqual(['starter']);
     expect(back.state.world.graceUntil).toBeNull();
   });
 
@@ -592,6 +592,7 @@ describe('completion', () => {
     expect(state.economy.coins).toBe(20 - 20 + 25 + 30);
     expect(state.economy.lifetimeFocusMin).toBe(25);
     expect(state.economy.lifetimeSessions).toBe(1);
+    if (!summary.seed) throw new Error('a 25 minute session drops a seed');
     expect(state.seeds[summary.seed.id]).toEqual(summary.seed);
     expect(summary.seed.tile).toBeNull();
     expect(summary.isNewSpecies).toBe(true);
@@ -664,7 +665,7 @@ describe('completion', () => {
     expect(returned.state.progress.bestStreak).toBe(4);
     expect(returned.state.progress.freezes).toBe(1);
     expect(vitalityNow(returned.state.world, later)).toBe(0);
-    expect(Object.keys(returned.state.seeds)).toHaveLength(7);
+    expect(Object.keys(returned.state.seeds)).toHaveLength(8);
     const revived = runSession(returned.state, 75, later, 5);
     expect(revived.summary.vitalityAfter).toBe(1);
     expect(revived.summary.streakAfter).toBe(1);
@@ -702,7 +703,7 @@ describe('pouch, goal, migration', () => {
       current = res.state;
     }
     expect(current.economy.coins).toBe(50);
-    expect(Object.keys(current.seeds)).toHaveLength(2);
+    expect(Object.keys(current.seeds)).toHaveLength(3);
     expect(current.progress.pityCounter).toBe(0);
   });
 

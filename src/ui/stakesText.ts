@@ -1,6 +1,7 @@
 import { HOUR_MS } from '../game/config';
 import { TERRAIN_INFO, getAnimal } from '../game/nature';
 import { getSpecies } from '../game/species';
+import { getVisitor } from '../game/visitors';
 import { callName, type Threat } from '../game/stakes';
 import type { NewsItem, TerrainKind } from '../game/types';
 
@@ -70,6 +71,8 @@ export function newsText(item: NewsItem): string {
       return `${animal()} had a little one`;
     case 'befriended':
       return item.name ? `${cap(getAnimal(item.subject)?.name.toLowerCase() ?? '')} became your friend: meet ${item.name}` : `${animal()} became your friend`;
+    case 'visited':
+      return (item.count ?? 1) <= 1 ? `A new visitor: the ${getVisitor(item.subject)?.name ?? item.subject}` : `The ${getVisitor(item.subject)?.name ?? item.subject} is visiting today`;
     case 'landmark':
       return `Your streak built a ${landmark()}`;
     case 'ruined':

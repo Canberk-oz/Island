@@ -6,8 +6,8 @@
 # It drives the real app with adb and asserts on the "[grove] ..." event lines
 # the app writes to the device log. Covered: launch, leaving the app (wither),
 # a short absence (grace), a forced stop during a session, a complete one
-# minute session with seed reveal and planting (which also opens the island
-# with its soundscape), and persistence over restarts.
+# minute session (too short for a seed), planting the starter seed (which
+# opens the island with its soundscape), and persistence over restarts.
 set -u
 
 APK="${1:?usage: smoke-test.sh app.apk [output-dir]}"
@@ -162,15 +162,16 @@ if wait_for "session:start seconds=60" 1 20; then
   pass "one minute session started"
   sleep 30
   shot 06-growing
-  if wait_for "session:completed" 1 60; then pass "session completed and dropped a seed"; else fail "session did not complete"; fi
-  sleep 5
-  shot 07-seed
-  for _ in 1 2 3; do adb shell input tap $((W / 2)) $((H * 42 / 100)); sleep 1; done
-  sleep 5
-  shot 08-reveal
-  if on_screen "Plant it"; then pass "seed was revealed"; else info "reveal card text not found in the view tree"; fi
-  tap "Plant it" 500 800
-  sleep 4
+  if wait_for "session:completed seed=none" 1 60; then pass "session completed (too short for a seed)"; else fail "session did not complete"; fi
+  sleep 6
+  shot 07-done
+  if on_screen "Session complete"; then pass "result card is shown"; else info "result card text not found in the view tree"; fi
+  tap "Done" 500 520
+  sleep 3
+  shot 08-idle
+  # Every new save holds a starter seed: plant it.
+  tap "Island" 500 940
+  sleep 6
   shot 09-island
   # The centre tile of the island sits at 45% of the screen height.
   adb shell input tap $((W / 2)) $((H * 45 / 100))

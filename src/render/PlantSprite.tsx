@@ -53,6 +53,7 @@ export function hasGlow(parts: PlantPart[]) {
 }
 
 interface IconProps {
+  variant?: string | null;
   speciesId?: string;
   terrain?: TerrainKind;
   animal?: string;
@@ -62,7 +63,7 @@ interface IconProps {
   silhouette: boolean;
 }
 
-function iconParts({ speciesId, terrain, animal, size }: Pick<IconProps, 'speciesId' | 'terrain' | 'animal' | 'size'>): PlantPart[] {
+function iconParts({ speciesId, terrain, animal, size, variant }: Pick<IconProps, 'speciesId' | 'terrain' | 'animal' | 'size' | 'variant'>): PlantPart[] {
   if (terrain) {
     const s = terrainSprite(terrain, size * 1.05);
     return [...s.parts, ...(s.spin?.parts ?? []), ...(s.alt ?? [])];
@@ -77,12 +78,12 @@ function iconParts({ speciesId, terrain, animal, size }: Pick<IconProps, 'specie
   }
   const sp = getSpecies(speciesId ?? '');
   // Fit the plant's height into the icon.
-  return plantSprite(sp.id, (size * 0.8) / (sp.size * 1.15)).parts;
+  return plantSprite(sp.id, (size * 0.8) / (sp.size * 1.15), 'summer', variant ?? null).parts;
 }
 
 function IconDrawing(props: IconProps) {
-  const { size, cx, top, silhouette, speciesId, terrain, animal } = props;
-  const parts = useMemo(() => iconParts({ speciesId, terrain, animal, size }), [speciesId, terrain, animal, size]);
+  const { size, cx, top, silhouette, speciesId, terrain, animal, variant } = props;
+  const parts = useMemo(() => iconParts({ speciesId, terrain, animal, size, variant }), [speciesId, terrain, animal, size, variant]);
   return (
     <Group transform={[{ translateX: cx }, { translateY: top + size * 0.93 }]}>
       {silhouette ? (
@@ -115,10 +116,12 @@ export function PlantIcon({
   speciesId,
   terrain,
   animal,
+  variant,
   size,
   silhouette = false,
   style,
 }: {
+  variant?: string | null;
   speciesId?: string;
   terrain?: TerrainKind;
   animal?: string;
@@ -128,7 +131,7 @@ export function PlantIcon({
 }) {
   return (
     <Canvas style={StyleSheet.flatten([{ width: size, height: size }, style])}>
-      <IconDrawing speciesId={speciesId} terrain={terrain} animal={animal} size={size} cx={size / 2} top={0} silhouette={silhouette} />
+      <IconDrawing speciesId={speciesId} terrain={terrain} animal={animal} variant={variant} size={size} cx={size / 2} top={0} silhouette={silhouette} />
     </Canvas>
   );
 }

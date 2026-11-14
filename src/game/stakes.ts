@@ -5,6 +5,8 @@ import { clamp01, hash01 } from './rng';
 import { streakAtRisk } from './streak';
 import { dayIndex, dayStartAt } from './time';
 import { LANDMARK_KINDS, RARITIES } from './types';
+import { variantHardyHours } from './variants';
+import { visitorPassing } from './visitors';
 import type { GameState, LandmarkKind, Nature, NewsItem, Rand, Rarity, Seed, World } from './types';
 
 /**
@@ -247,7 +249,7 @@ export function settleIsland(state: GameState, now: number): Settlement {
     for (const [key, seedId] of Object.entries(world.tiles)) {
       const seed = state.seeds[seedId];
       if (!seed || seed.diedAt != null) continue;
-      const limit = sparedAt(nature, seedId) + plantDiesAfterHours(key, seed.rarity);
+      const limit = sparedAt(nature, seedId) + plantDiesAfterHours(key, seed.rarity) + variantHardyHours(seed.variant);
       if (drought < limit) continue;
       const diedAt = Math.min(now, Math.max(floor, now - (drought - limit) * HOUR_MS));
       firstAt = Math.min(firstAt, diedAt);
@@ -380,6 +382,13 @@ export function rewardFocus(
       news.push({ at: now, kind: 'questStarted', subject: '' });
     }
     nature = { ...nature, revival };
+
+    // Whoever is passing by today lands, now that somebody is home.
+    const passing = visitorPassing({ ...state, seeds, nature }, today);
+    if (passing && nature.visitor?.day !== today) {
+      nature = { ...nature, visitor: { id: passing, day: today }, visitors: { ...nature.visitors, [passing]: (nature.visitors[passing] ?? 0) + 1 } };
+      news.push({ at: now, kind: 'visited', subject: passing, count: nature.visitors[passing] });
+    }
 
     // A long streak and a good friendship bring young.
     const sinceBirth = nature.lastBirthDay == null ? Infinity : today - nature.lastBirthDay;
@@ -520,7 +529,7 @@ export function threats(state: GameState, now: number): Threat[] {
     if (leaves.length) add(earliest(leaves));
 
     if (livingPlants.length > 0) {
-      const first = Math.min(...livingPlants.map(([key, id]) => sparedAt(nature, id) + plantDiesAfterHours(key, state.seeds[id].rarity)));
+      const first = Math.min(...livingPlants.map(([key, id]) => sparedAt(nature, id) + plantDiesAfterHours(key, state.seeds[id].rarity) + variantHardyHours(state.seeds[id].variant)));
       add({ kind: 'stump', at: timeAtDrought(state, first, now) });
     }
 

@@ -46,6 +46,8 @@ export const CONFIG = {
   },
 
   rewards: {
+    /** Only a session of at least this many minutes in one go drops a seed. */
+    minSeedMin: 20,
     weights: { common: 70, rare: 22, epic: 7, legendary: 1 } as Record<Rarity, number>,
     /** After this many commons in a row, the next seed is rare or better. */
     pityAfter: 7,

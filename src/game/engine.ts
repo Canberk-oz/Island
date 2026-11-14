@@ -4,6 +4,8 @@ import { coinsForSession, maxStake, wagerPayout } from './economy';
 import { rollSeed } from './rewards';
 import { claimLevels, createNature, levelFor, sanitizeStock } from './nature';
 import { makeId } from './rng';
+import { getSpecies } from './species';
+import { rollVariant } from './variants';
 import { rewardFocus, settleIsland, syncLandmarks } from './stakes';
 import { earnFreezes, markStreakDay, ringProgress, settleStreak, type StreakSettlement } from './streak';
 import { dayIndex, dayKey } from './time';
@@ -27,7 +29,10 @@ export function createInitialState(now: number): GameState {
     createdAt: now,
     sessions: [],
     active: null,
-    seeds: {},
+    // Everyone starts with one seed, so the island has something to care for from the first minute.
+    seeds: {
+      starter: { id: 'starter', speciesId: 'clover', rarity: 'common', earnedAt: now, source: 'session', tile: null, plantedAt: null },
+    },
     world: {
       tiles: {},
       radius: CONFIG.world.startRadius,
@@ -47,7 +52,8 @@ export function createInitialState(now: number): GameState {
       minutesTowardFreeze: 0,
       frozenDays: [],
       pityCounter: 0,
-      discovered: {},
+      discovered: { clover: 1 },
+      variants: {},
     },
     nature: createNature(now),
   };
@@ -227,22 +233,22 @@ export function completeSession(
   progress = freeze.progress;
 
   // Seed drop.
-  const roll = rollSeed(minutes, progress.pityCounter, progress.discovered, rand);
-  const seed: Seed = {
-    id: makeId('seed', now, rand),
-    speciesId: roll.speciesId,
-    rarity: roll.rarity,
-    earnedAt: now,
-    source: 'session',
-    tile: null,
-    plantedAt: null,
-  };
-  const isNewSpecies = !progress.discovered[roll.speciesId];
-  progress = {
-    ...progress,
-    pityCounter: roll.pityCounter,
-    discovered: { ...progress.discovered, [roll.speciesId]: (progress.discovered[roll.speciesId] ?? 0) + 1 },
-  };
+  // A seed takes real focus: only a session of 20+ minutes in one go drops one.
+  let seed: Seed | null = null;
+  let isNewSpecies = false;
+  if (minutes >= CONFIG.rewards.minSeedMin) {
+    const roll = rollSeed(minutes, progress.pityCounter, progress.discovered, rand);
+    const id = makeId('seed', now, rand);
+    const variant = rollVariant(getSpecies(roll.speciesId).kind, minutes, rand);
+    seed = { id, speciesId: roll.speciesId, rarity: roll.rarity, earnedAt: now, source: 'session', tile: null, plantedAt: null, variant };
+    isNewSpecies = !progress.discovered[roll.speciesId];
+    progress = {
+      ...progress,
+      pityCounter: roll.pityCounter,
+      discovered: { ...progress.discovered, [roll.speciesId]: (progress.discovered[roll.speciesId] ?? 0) + 1 },
+      variants: variant ? { ...progress.variants, [variant]: (progress.variants[variant] ?? 0) + 1 } : progress.variants,
+    };
+  }
 
   // Coins and wager.
   const coinsEarned = coinsForSession(active.durationSec);
@@ -261,7 +267,7 @@ export function completeSession(
     stake: active.stake,
     payout,
     coinsEarned,
-    seedId: seed.id,
+    seedId: seed?.id,
   };
 
   const levelBefore = levelFor(state.economy.lifetimeFocusMin);
@@ -269,7 +275,7 @@ export function completeSession(
     ...state,
     active: null,
     sessions: pushSession(state.sessions, record),
-    seeds: { ...state.seeds, [seed.id]: seed },
+    seeds: seed ? { ...state.seeds, [seed.id]: seed } : state.seeds,
     world,
     progress,
     economy: {
@@ -338,15 +344,9 @@ export function buyPouch(state: GameState, now: number, rand: Rand): PouchResult
   const cost = CONFIG.economy.pouchCost;
   if (state.economy.coins < cost) return { ok: false, reason: 'notEnoughCoins' };
   const roll = rollSeed(CONFIG.rewards.luckReferenceMin, 0, state.progress.discovered, rand, 'rare');
-  const seed: Seed = {
-    id: makeId('seed', now, rand),
-    speciesId: roll.speciesId,
-    rarity: roll.rarity,
-    earnedAt: now,
-    source: 'pouch',
-    tile: null,
-    plantedAt: null,
-  };
+  const id = makeId('seed', now, rand);
+  const variant = rollVariant(getSpecies(roll.speciesId).kind, CONFIG.rewards.luckReferenceMin, rand);
+  const seed: Seed = { id, speciesId: roll.speciesId, rarity: roll.rarity, earnedAt: now, source: 'pouch', tile: null, plantedAt: null, variant };
   const isNewSpecies = !state.progress.discovered[roll.speciesId];
   return {
     ok: true,
@@ -362,6 +362,7 @@ export function buyPouch(state: GameState, now: number, rand: Rand): PouchResult
           ...state.progress.discovered,
           [roll.speciesId]: (state.progress.discovered[roll.speciesId] ?? 0) + 1,
         },
+        variants: variant ? { ...state.progress.variants, [variant]: (state.progress.variants[variant] ?? 0) + 1 } : state.progress.variants,
       },
     },
   };
@@ -383,10 +384,10 @@ export function migrate(raw: unknown, now: number): GameState {
     ...r,
     schemaVersion: SCHEMA_VERSION,
     sessions: Array.isArray(r.sessions) ? r.sessions : [],
-    seeds: r.seeds ?? {},
+    seeds: r.seeds ?? fresh.seeds,
     world: { ...fresh.world, ...(r.world ?? {}), terrain: { ...(r.world?.terrain ?? {}) } },
     economy: { ...fresh.economy, ...(r.economy ?? {}) },
-    progress: { ...fresh.progress, ...(r.progress ?? {}) },
+    progress: { ...fresh.progress, ...(r.progress ?? {}), discovered: { ...(r.progress?.discovered ?? fresh.progress.discovered) }, variants: { ...(r.progress?.variants ?? {}) } },
     nature: {
       // Saves from before the stakes start with a clean slate: the drought counts from now.
       ...fresh.nature,
@@ -399,6 +400,7 @@ export function migrate(raw: unknown, now: number): GameState {
       away: { ...(r.nature?.away ?? {}) },
       family: { ...(r.nature?.family ?? {}) },
       landmarks: { ...(r.nature?.landmarks ?? {}) },
+      visitors: { ...(r.nature?.visitors ?? {}) },
       news: Array.isArray(r.nature?.news) ? r.nature.news : [],
     },
   };

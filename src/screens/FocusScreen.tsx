@@ -44,6 +44,8 @@ import { useAtmosphere } from '../render/useAtmosphere';
 import { buildWildlife, EMPTY_SCENE } from '../render/wildlife';
 import { vitalityNow } from '../game/decay';
 import { islandResidents, waterLevel } from '../game/stakes';
+import { TIER_LABEL, getVariant } from '../game/variants';
+import { visitorResident } from '../game/visitors';
 import { IslandStatus } from '../ui/IslandStatus';
 import { newsText } from '../ui/stakesText';
 import type { NewsItem } from '../game/types';
@@ -264,8 +266,9 @@ export function FocusScreen({ onPlant }: { onPlant: (seedId: string) => void }) 
     [busy, world.tiles, world.terrain, game.nature.away, game.nature.family],
   );
   const farScene = useMemo(
-    () => (busy && hasIsland ? buildWildlife(far, world, game.seeds, out, atmo.night, atmo.hour, atmo.season === 'winter') : EMPTY_SCENE),
-    [busy, hasIsland, far, world, game.seeds, out, atmo.night, atmo.hour, atmo.season],
+    () => (busy && hasIsland ? buildWildlife(far, world, game.seeds, [...out, ...visitorResident(game, now())], atmo.night, atmo.hour, atmo.season === 'winter') : EMPTY_SCENE),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [busy, hasIsland, far, world, game.seeds, out, game.nature.visitor, atmo.night, atmo.hour, atmo.season],
   );
   const ruined = useMemo(() => Object.entries(game.nature.landmarks).filter(([, m]) => m?.ruined).map(([k]) => k), [game.nature.landmarks]);
   useEffect(() => {
@@ -424,7 +427,19 @@ export function FocusScreen({ onPlant }: { onPlant: (seedId: string) => void }) 
         />
       )}
 
-      {result?.kind === 'completed' && showReveal && (
+      {result?.kind === 'completed' && showReveal && !result.summary.seed && (
+        <Animated.View entering={FadeInDown.springify().damping(13)} style={[styles.doneCard, { top: insets.top + 44 }]} testID="done-card">
+          <Txt weight="black" size={24} center color={colors.white}>
+            Session complete
+          </Txt>
+          <Txt weight="bold" size={14} center color="rgba(255,255,255,0.85)" style={{ marginTop: 4, marginBottom: 8 }}>
+            {`Seeds drop from ${CONFIG.rewards.minSeedMin}+ minutes of focus in one go`}
+          </Txt>
+          <CompletionRewards summary={result.summary} onPlant={dismissResult} onDone={dismissResult} />
+        </Animated.View>
+      )}
+
+      {result?.kind === 'completed' && showReveal && result.summary.seed && (
         <SeedReveal
           seed={result.summary.seed}
           isNew={result.summary.isNewSpecies}
@@ -433,7 +448,7 @@ export function FocusScreen({ onPlant }: { onPlant: (seedId: string) => void }) 
           <CompletionRewards
             summary={result.summary}
             onPlant={() => {
-              const id = result.summary.seed.id;
+              const id = result.summary.seed!.id;
               dismissResult();
               onPlant(id);
             }}
@@ -617,7 +632,7 @@ function IdleControls({ dark, top }: { dark: boolean; top: number }) {
         <Animated.View style={breatheStyle}>
           <Button
             label="Start focusing"
-            sub={`${rarePlus}% chance of a rare seed or better`}
+            sub={minutes >= CONFIG.rewards.minSeedMin ? `Drops a seed · ${rarePlus}% rare or better` : `No seed under ${CONFIG.rewards.minSeedMin} minutes · coins and island care`}
             onPress={onStart}
             feel="none"
             testID="start-button"
@@ -894,9 +909,12 @@ function CompletionRewards({
     befriended: '💛',
     landmark: '🏛️',
     rebuilt: '🏛️',
+    visited: '🧳',
     revived: '🌱',
     questStarted: '🌅',
   };
+  const variant = getVariant(summary.seed?.variant);
+  if (variant) rows.push({ icon: <Txt size={16}>🔎</Txt>, text: `${variant.name} (${TIER_LABEL[variant.tier].toLowerCase()} variant). Look closely.` });
   for (const kind of Object.keys(NEWS_ICON) as NewsItem['kind'][]) {
     const item = summary.news.find((n) => n.kind === kind);
     if (item) rows.push({ icon: <Txt size={16}>{NEWS_ICON[kind]}</Txt>, text: newsText(item) });
@@ -923,8 +941,14 @@ function CompletionRewards({
         <RewardRow key={i} icon={r.icon} text={r.text} delay={650 + i * 130} />
       ))}
       <Animated.View entering={FadeInDown.delay(1250).springify().damping(12)} style={{ marginTop: 14 }}>
-        <Button label="Plant it" onPress={onPlant} testID="plant-it" />
-        <Button label="Later" tone="ghost" onPress={onDone} testID="reveal-done" style={{ marginTop: 10, minHeight: 50 }} feel="light" />
+        {summary.seed ? (
+          <>
+            <Button label="Plant it" onPress={onPlant} testID="plant-it" />
+            <Button label="Later" tone="ghost" onPress={onDone} testID="reveal-done" style={{ marginTop: 10, minHeight: 50 }} feel="light" />
+          </>
+        ) : (
+          <Button label="Done" onPress={onDone} testID="reveal-done" />
+        )}
       </Animated.View>
     </View>
   );
@@ -1036,6 +1060,7 @@ const styles = StyleSheet.create({
     marginTop: 7,
   },
   rewardIcon: { width: 28, alignItems: 'center', marginRight: 6 },
+  doneCard: { position: 'absolute', left: 20, right: 20, backgroundColor: 'rgba(20,45,32,0.9)', borderRadius: radius.lg, padding: 20 },
   witherCard: {
     position: 'absolute',
     left: 20,

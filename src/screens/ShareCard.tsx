@@ -18,6 +18,7 @@ import { colors, motion, radius, skyAt } from '../ui/theme';
 import { atmosphereAt } from '../game/atmosphere';
 import { TERRAIN_INFO, getAnimal } from '../game/nature';
 import { bondLevel } from '../game/stakes';
+import { visitorResident } from '../game/visitors';
 import { LANDMARK_KINDS } from '../game/types';
 import { PlantBody } from '../render/PlantSprite';
 import { animalSprite, terrainSprite } from '../render/creatures';
@@ -101,7 +102,7 @@ export function ShareCard({ visible, onClose }: { visible: boolean; onClose: () 
   // The picture shows the animals that are out right now.
   const scene = useMemo(() => {
     if (!visible) return EMPTY_SCENE;
-    return buildWildlife(layout, game.world, game.seeds, islandResidents(game, now(), 1).filter((r) => !r.dry), atmo.night, atmo.hour, atmo.season === 'winter');
+    return buildWildlife(layout, game.world, game.seeds, [...islandResidents(game, now(), 1).filter((r) => !r.dry), ...visitorResident(game, now())], atmo.night, atmo.hour, atmo.season === 'winter');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visible, layout, game.world, game.seeds, game.nature, palette.dark]);
   const ruined = useMemo(() => Object.entries(game.nature.landmarks).filter(([, m]) => m?.ruined).map(([k]) => k), [game.nature.landmarks]);

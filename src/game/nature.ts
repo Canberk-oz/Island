@@ -72,6 +72,8 @@ export function createNature(now = 0): Nature {
     lastBirthDay: null,
     landmarks: {},
     revival: null,
+    visitor: null,
+    visitors: {},
     news: [],
     newsSeenAt: now,
   };

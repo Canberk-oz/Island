@@ -37,6 +37,8 @@ export interface Seed {
   /** "x,y" of the tile it grows on, or null while it waits in the seed tray. */
   tile: string | null;
   plantedAt: number | null;
+  /** A rare quirk the plant was born with (see variants.ts). */
+  variant?: string | null;
   /** Set when the plant died of neglect: it stands as a stump until it is revived or cleared. */
   diedAt?: number | null;
 }
@@ -82,6 +84,7 @@ export type NewsKind =
   | 'revived'
   | 'born'
   | 'befriended'
+  | 'visited'
   | 'landmark'
   | 'ruined'
   | 'rebuilt'
@@ -139,6 +142,9 @@ export interface Nature {
   revival: Revival | null;
   /** Island diary, oldest first. */
   news: NewsItem[];
+  /** The travelling animal that landed today, and how often each one has been met. */
+  visitor: { id: string; day: number } | null;
+  visitors: Record<string, number>;
   /** Diary entries after this moment have not been shown yet. */
   newsSeenAt: number;
 }
@@ -165,6 +171,8 @@ export interface Progress {
   pityCounter: number;
   /** speciesId -> how many were found */
   discovered: Record<string, number>;
+  /** variant id -> how many were found */
+  variants: Record<string, number>;
 }
 
 export interface GameState {
@@ -182,7 +190,8 @@ export interface GameState {
 /** Everything the result screen needs after a completed session. */
 export interface CompletionSummary {
   session: SessionRecord;
-  seed: Seed;
+  /** Null when the session was too short to drop a seed. */
+  seed: Seed | null;
   isNewSpecies: boolean;
   minutes: number;
   coinsEarned: number;

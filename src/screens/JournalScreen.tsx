@@ -9,6 +9,8 @@ import { CONFIG } from '../game/config';
 import { ANIMALS, TERRAIN_INFO, levelProgress } from '../game/nature';
 import { BOND_LABELS, bondLevel, daysToNextBond, landmarkRebuildStreak, stumps } from '../game/stakes';
 import { LANDMARK_KINDS } from '../game/types';
+import { TIER_LABEL, VARIANTS } from '../game/variants';
+import { VISITORS, visitorHere } from '../game/visitors';
 import { IslandStatus } from '../ui/IslandStatus';
 import { formatAgo, newsText, newsTone } from '../ui/stakesText';
 import { RARITY_LABEL, SPECIES, getSpecies } from '../game/species';
@@ -375,6 +377,69 @@ export function JournalScreen({ onShare }: { onShare: () => void }) {
           })}
           <PlantSheet width={w - 36} height={wildGridH} items={wildItems} style={{ position: 'absolute', left: 0, top: 0 }} />
         </View>
+
+        <SectionTitle>{`Visitors  ${VISITORS.filter((v) => nature.visitors[v.id]).length} / ${VISITORS.length}`}</SectionTitle>
+        <Txt weight="bold" size={12.5} color={colors.inkSoft} style={{ marginBottom: 8 }}>
+          Every day a traveller passes by. It lands only if you focus 10+ minutes that day, and it is gone by morning.
+        </Txt>
+        <View style={styles.grid}>
+          {VISITORS.map((v) => {
+            const met = nature.visitors[v.id] ?? 0;
+            const here = visitorHere(game, now()) === v.id;
+            return (
+              <View
+                key={v.id}
+                style={[styles.cell, { width: wildCell, height: wildH, backgroundColor: here ? '#FFF3D6' : met ? '#EAF6EC' : '#F1ECE0', borderColor: here ? colors.coin : met ? colors.leaf : 'transparent' }]}
+                testID={`visitor-${v.id}`}
+              >
+                <View style={{ height: wildIcon }} />
+                <Txt weight="heavy" size={12.5} center numberOfLines={1} style={{ marginTop: 3 }} color={met ? colors.ink : colors.inkFaint}>
+                  {met ? v.name : '???'}
+                </Txt>
+                <Txt weight="bold" size={10.5} center numberOfLines={3} color={met ? colors.inkSoft : colors.inkFaint} style={{ marginTop: 1 }}>
+                  {here ? 'Here today' : met ? `Met ${met === 1 ? 'once' : `${met} times`}` : v.hint}
+                </Txt>
+              </View>
+            );
+          })}
+          <PlantSheet
+            width={w - 36}
+            height={Math.ceil(VISITORS.length / 3) * (wildH + GAP) - GAP}
+            items={VISITORS.map((v, i) => ({
+              animal: v.id,
+              cx: (i % 3) * (wildCell + GAP) + wildCell / 2,
+              top: Math.floor(i / 3) * (wildH + GAP) + 8,
+              size: wildIcon,
+              silhouette: !nature.visitors[v.id],
+            }))}
+            style={{ position: 'absolute', left: 0, top: 0 }}
+          />
+        </View>
+
+        <SectionTitle>{`Variants  ${VARIANTS.filter((v) => progress.variants[v.id]).length} / ${VARIANTS.length}`}</SectionTitle>
+        <Card style={{ paddingVertical: 6 }}>
+          <Txt weight="bold" size={12.5} color={colors.inkSoft} style={{ paddingVertical: 6 }}>
+            Now and then a seed grows into a plant with a quirk. It looks like any other from afar: the detail below is how you tell. Variants hold out longer in a drought.
+          </Txt>
+          {[...VARIANTS].reverse().map((v) => {
+            const n = progress.variants[v.id] ?? 0;
+            return (
+              <View key={v.id} style={{ paddingVertical: 7 }} testID={`variant-${v.id}`}>
+                <View style={styles.rowBetween}>
+                  <Txt weight="heavy" size={14} color={n ? colors.ink : colors.inkFaint}>
+                    {n ? v.name : '???'}
+                  </Txt>
+                  <Txt weight="heavy" size={11.5} color={n ? colors.coinDark : colors.inkFaint}>
+                    {`${TIER_LABEL[v.tier]}${n ? ` · found ${n}` : ''}`}
+                  </Txt>
+                </View>
+                <Txt weight="bold" size={12} color={n ? colors.inkSoft : colors.inkFaint}>
+                  {n ? v.tell : 'Not found yet'}
+                </Txt>
+              </View>
+            );
+          })}
+        </Card>
 
         <SectionTitle>Streak landmarks</SectionTitle>
         <Card style={{ paddingVertical: 8 }}>

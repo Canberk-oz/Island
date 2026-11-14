@@ -41,7 +41,8 @@ npm run build:apk     # android/app/build/outputs/apk/release/app-release.apk
 | | |
 |---|---|
 | **Session** | 1 to 120 minutes. The screen stays on. Leaving the app for more than 6 seconds withers the sapling; shorter absences are forgiven up to 3 times per session. |
-| **Seeds** | Every finished session drops a seed: common 70%, rare 22%, epic 7%, legendary 1% at 25 minutes. Longer sessions are luckier, and after 7 commons in a row the next one is rare or better. |
+| **Seeds** | A session of 20+ minutes in one go drops a seed: common 70%, rare 22%, epic 7%, legendary 1% at 25 minutes. Longer sessions are luckier, and after 7 commons in a row the next one is rare or better. Shorter sessions still earn coins and feed the island, but drop nothing. You start with one clover seed. |
+| **Variants** | About one seed in ten grows into a plant with a quirk: moss at its foot, an ivy vine, a knothole, a bird's nest, a lightning scar and more (10 in all, uncommon to legendary). The plant looks normal from afar; each variant shows as one small local detail, listed in the Journal once found. Variants hold out 12 to 96 hours longer in a drought. |
 | **Island** | You plant seeds yourself. The island grows when 70% of its tiles are planted (9 → 21 → 37 → 69 → 97 tiles). Pinch to zoom and drag to look around, or use the zoom button. |
 | **Growing up** | A plant starts as a sprout, is young after a day, mature after 4 days and ancient after 30. Moving it keeps its age. |
 | **Decay** | Nothing fades for 20 hours after a session of 10+ minutes. After that the island takes 72 hours to wilt completely. 75 minutes of focus bring a fully wilted island back to full colour, 25 minutes undo one missed day. |
@@ -55,6 +56,7 @@ npm run build:apk     # android/app/build/outputs/apk/release/app-release.apk
 | **Landmarks** | A streak of 7, 30 and 100 days builds a stone arch, a windmill and a lighthouse to place. They fall to ruins when the streak breaks and are rebuilt at half that streak. |
 | **Countdown** | Every screen shows the island's health and the next thing that goes wrong if you do not focus ("Rusty the fox hides in 9 h"). Notifications say the same while the app is closed. |
 | **Marks** | A session that withers leaves a dead twig on the island for a day. |
+| **Visitors** | Every day one of six travellers passes by (snow hare, great stag, grey heron, swan, kingfisher, peacock), depending on what the island offers. It lands only if you focus 10+ minutes that day and is gone by morning. The Journal counts who you have met. |
 | **Wager** | Stake up to 2 coins per session minute. Finish and get 1.5x back, leave and lose the stake. |
 | **Coins** | 1 per focused minute. A lucky pouch (100 coins) holds a seed that is rare or better. |
 | **Streak** | A day counts with one finished session of 10+ minutes. Days roll over at 04:00. |
@@ -106,6 +108,8 @@ src/game/      Pure game logic: no React, no storage, no clock. Fully unit teste
   world.ts       island tiles, planting, growth
   nature.ts      island levels, nature pieces, water bodies, animal habitats
   atmosphere.ts  time of day, sun and moon, shadows, seasons, weather
+  variants.ts    rare plant quirks and their odds
+  visitors.ts    the daily travelling animal
   stakes.ts      drought, animals leaving, friendship, young, stumps, revival, landmarks, countdowns
   economy.ts     coins and wager
 src/store/     Zustand store: wires the pure logic to the clock and AsyncStorage

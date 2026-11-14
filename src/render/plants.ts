@@ -363,17 +363,181 @@ const BUILDERS: Record<Species['kind'], (s: Species, u: number, season: Season) 
   crystal,
 };
 
+/**
+ * The small, local detail that gives a variant away. Everything is drawn on
+ * top of the unchanged plant and stays close to the trunk, the base or a
+ * single leaf: nothing here changes the silhouette or the colours.
+ */
+function variantTell(variant: string, s: Species, u: number): PlantPart[] {
+  const h = u * s.size;
+  const stroke = (w: number) => Math.max(1, w);
+  // Where the trunk (or stem, or stalk) is, and how wide.
+  const trunkH = s.kind === 'tree' ? h * 0.5 : s.kind === 'pine' ? h * 0.25 : s.kind === 'mushroom' ? h * 0.55 : h;
+  const trunkW = s.kind === 'tree' ? u * 0.1 : s.kind === 'pine' ? u * 0.09 : s.kind === 'cactus' ? u * 0.2 : s.kind === 'mushroom' ? h * 0.13 : u * 0.035;
+  const crownR = h * 0.3;
+  const crownY = -h * 0.5 - crownR * 0.75;
+  const out: PlantPart[] = [];
+  const raw = (path: SkPath, color: string, extra: Partial<PlantPart> = {}) => out.push({ path, color, wiltColor: wilted(color), ...extra });
+
+  switch (variant) {
+    case 'mossy': {
+      const b = pb();
+      b.addOval({ x: -trunkW - u * 0.2, y: -u * 0.055, width: u * 0.24, height: u * 0.09 });
+      b.addOval({ x: -trunkW - u * 0.08, y: -u * 0.085, width: u * 0.13, height: u * 0.08 });
+      raw(b.build(), '#5B9A4C');
+      raw(pb().addOval({ x: -trunkW - u * 0.15, y: -u * 0.06, width: u * 0.1, height: u * 0.035 }).build(), '#86BF6C', { opacity: 0.9 });
+      break;
+    }
+    case 'dew': {
+      const drops = pb();
+      const glints = pb();
+      for (const [x, y] of [[-0.15, 0.2], [0.13, 0.27], [0.03, 0.12]] as const) {
+        drops.addCircle(x * u, -y * h - u * 0.02, u * 0.026);
+        glints.addCircle(x * u - u * 0.008, -y * h - u * 0.03, u * 0.009);
+      }
+      raw(drops.build(), '#CFEBFA', { opacity: 0.92 });
+      raw(glints.build(), '#FFFFFF');
+      break;
+    }
+    case 'lichen': {
+      const b = pb();
+      [0.14, 0.27, 0.38, 0.52].forEach((f, i) => {
+        const x = (i % 2 ? 1 : -1) * trunkW * 0.38;
+        b.addOval({ x: x - u * 0.024, y: -trunkH * f - u * 0.016, width: u * 0.048, height: u * 0.032 });
+      });
+      raw(b.build(), '#B4C6A2', { opacity: 0.95 });
+      break;
+    }
+    case 'ivy': {
+      const top = trunkH * 0.36;
+      const vine = pb().moveTo(-trunkW * 0.9, 0);
+      const leaves = pb();
+      for (let i = 1; i <= 3; i++) {
+        const y = -(top * i) / 3;
+        const side = i % 2 ? 1 : -1;
+        vine.quadTo(side * trunkW * 1.1, y + top / 6, side * trunkW * 0.55, y);
+        addLeaf(leaves, side * trunkW * 0.55, y, (side > 0 ? -25 : -155) * DEG, u * 0.085, u * 0.034);
+      }
+      raw(vine.build(), '#2F6B3A', { stroke: stroke(u * 0.02) });
+      raw(leaves.build(), '#27603A');
+      break;
+    }
+    case 'knothole': {
+      const y = -trunkH * 0.55;
+      raw(pb().addOval({ x: -u * 0.045, y: y - u * 0.06, width: u * 0.09, height: u * 0.12 }).build(), lighten(s.stem, 0.22));
+      raw(pb().addOval({ x: -u * 0.03, y: y - u * 0.045, width: u * 0.06, height: u * 0.09 }).build(), '#2E1D12');
+      break;
+    }
+    case 'bracket': {
+      const tops = pb();
+      const unders = pb();
+      [0.32, 0.54].forEach((f, i) => {
+        const x = trunkW * (0.75 - i * 0.12);
+        const y = -trunkH * f;
+        const w = u * (0.085 - i * 0.015);
+        tops.moveTo(x - w * 0.2, y).cubicTo(x, y - w * 0.55, x + w, y - w * 0.4, x + w, y).close();
+        unders.moveTo(x - w * 0.2, y).lineTo(x + w, y).quadTo(x + w * 0.4, y + w * 0.28, x - w * 0.2, y).close();
+      });
+      raw(tops.build(), '#EAD9B8');
+      raw(unders.build(), '#B89B72');
+      break;
+    }
+    case 'twin': {
+      const x = trunkW + u * 0.1;
+      const top = -h * 0.42;
+      raw(pb().moveTo(trunkW * 0.5, 0).quadTo(x + u * 0.06, top * 0.45, x, top).build(), s.stem, { stroke: stroke(u * (s.kind === 'cactus' ? 0.1 : s.kind === 'mushroom' ? 0.07 : 0.045)) });
+      if (s.kind === 'mushroom') {
+        raw(pb().moveTo(x - u * 0.09, top).cubicTo(x - u * 0.09, top - u * 0.11, x + u * 0.09, top - u * 0.11, x + u * 0.09, top).close().build(), s.primary);
+      } else if (s.kind !== 'cactus') {
+        const bud = pb();
+        if (s.kind === 'fern') {
+          addLeaf(bud, x, top + u * 0.04, -70 * DEG, u * 0.16, u * 0.05);
+          addLeaf(bud, x, top + u * 0.04, -125 * DEG, u * 0.14, u * 0.045);
+        } else {
+          addLeaf(bud, x, top + u * 0.02, -90 * DEG, u * 0.13, u * 0.05);
+        }
+        raw(bud.build(), s.primary);
+      }
+      break;
+    }
+    case 'nesting': {
+      const y = -trunkH - u * 0.01;
+      const x = trunkW * 0.3;
+      const eggs = pb();
+      eggs.addOval({ x: x - u * 0.045, y: y - u * 0.075, width: u * 0.04, height: u * 0.052 });
+      eggs.addOval({ x: x + u * 0.005, y: y - u * 0.07, width: u * 0.04, height: u * 0.052 });
+      raw(eggs.build(), '#BFE3F0');
+      raw(pb().moveTo(x - u * 0.09, y - u * 0.035).quadTo(x, y + u * 0.05, x + u * 0.09, y - u * 0.035).quadTo(x, y - u * 0.005, x - u * 0.09, y - u * 0.035).close().build(), '#8A6A45');
+      raw(
+        pb().moveTo(x - u * 0.1, y - u * 0.03).lineTo(x - u * 0.03, y + u * 0.005).moveTo(x + u * 0.11, y - u * 0.04).lineTo(x + u * 0.03, y).moveTo(x - u * 0.04, y + u * 0.012).lineTo(x + u * 0.06, y + u * 0.012).build(),
+        '#6B4F33',
+        { stroke: stroke(u * 0.012) },
+      );
+      break;
+    }
+    case 'lightning': {
+      raw(
+        pb()
+          .moveTo(-trunkW * 0.2, -trunkH * 0.97)
+          .lineTo(-trunkW * 0.5, -trunkH * 0.7)
+          .lineTo(-trunkW * 0.15, -trunkH * 0.55)
+          .lineTo(-trunkW * 0.55, -trunkH * 0.3)
+          .lineTo(-trunkW * 0.35, -trunkH * 0.08)
+          .build(),
+        '#EBDDC3',
+        { stroke: stroke(u * 0.022) },
+      );
+      const bx = s.kind === 'tree' ? crownR * 0.55 : u * 0.1;
+      const by = s.kind === 'tree' ? crownY - crownR * 0.62 : -h * 0.9;
+      raw(
+        pb().moveTo(bx, by).lineTo(bx + u * 0.1, by - u * 0.13).lineTo(bx + u * 0.19, by - u * 0.15).moveTo(bx + u * 0.1, by - u * 0.13).lineTo(bx + u * 0.1, by - u * 0.24).build(),
+        '#5A4636',
+        { stroke: stroke(u * 0.02) },
+      );
+      break;
+    }
+    case 'sport': {
+      if (s.kind === 'tree') {
+        // One small cluster at the lower edge of the crown.
+        const b = pb();
+        const cx = crownR * 0.62;
+        const cy = crownY + crownR * 0.42;
+        b.addCircle(cx, cy, crownR * 0.13).addCircle(cx + crownR * 0.15, cy - crownR * 0.08, crownR * 0.11).addCircle(cx + crownR * 0.03, cy - crownR * 0.16, crownR * 0.1);
+        raw(b.build(), '#F1ECC9');
+        raw(pb().addCircle(cx + crownR * 0.03, cy - crownR * 0.05, crownR * 0.075).addCircle(cx + crownR * 0.14, cy - crownR * 0.09, crownR * 0.05).build(), mixHex(s.primary, '#F1ECC9', 0.35));
+      } else {
+        // One leaf (or frond) with a cream margin.
+        const flowerLeaf = s.kind === 'flower';
+        const x0 = 0;
+        const y0 = flowerLeaf ? -h * 0.3 : 0;
+        const a = (flowerLeaf ? -35 : -90 + 0.5 * 130 * (s.detail > 2 ? 0.6 : 0)) * DEG;
+        const len = flowerLeaf ? u * 0.36 : h * 0.72;
+        const w = flowerLeaf ? u * 0.13 : u * 0.16;
+        const edge = pb();
+        addLeaf(edge, x0, y0, a, len, w);
+        raw(edge.build(), '#F3EBC8');
+        const core = pb();
+        addLeaf(core, x0 + Math.cos(a) * len * 0.08, y0 + Math.sin(a) * len * 0.08, a, len * 0.8, w * 0.5);
+        raw(core.build(), flowerLeaf ? lighten(s.stem, 0.12) : s.primary);
+      }
+      break;
+    }
+  }
+  return out;
+}
+
 const cache = new Map<string, PlantSpriteData>();
 
 /** Build (and cache) the sprite of a species at a given unit size. */
-export function plantSprite(speciesId: string, unit: number, season: Season = 'summer'): PlantSpriteData {
+export function plantSprite(speciesId: string, unit: number, season: Season = 'summer', variant: string | null = null): PlantSpriteData {
   const u = Math.round(unit * 2) / 2;
-  const key = `${speciesId}@${u}:${season}`;
+  const key = `${speciesId}@${u}:${season}:${variant ?? ''}`;
   let data = cache.get(key);
   if (!data) {
     const s = getSpecies(speciesId);
     const wide = s.kind === 'tree' ? 0.36 * s.size : s.kind === 'pine' ? 0.42 : 0.4;
-    data = { parts: BUILDERS[s.kind](inSeason(s, season), u, season), height: u * s.size * 1.15, halfWidth: u * wide };
+    const tell = variant ? variantTell(variant, s, u) : [];
+    data = { parts: [...BUILDERS[s.kind](inSeason(s, season), u, season), ...tell], height: u * s.size * 1.15, halfWidth: u * wide };
     cache.set(key, data);
   }
   return data;

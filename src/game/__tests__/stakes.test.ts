@@ -135,7 +135,7 @@ describe('animals moving away', () => {
     expect(r.news.filter((n) => n.kind === 'left').map((n) => n.subject)).toEqual(['fox']);
     expect(r.state.nature.away.fox.leftAt).toBeCloseTo(at - HOUR_MS, -3);
     expect(ids(r.state, at)).not.toContain('fox');
-    expect(unseenNews(r.state.nature).length).toBe(1);
+    expect(unseenNews(r.state.nature).filter((n) => n.kind === 'left').length).toBe(1);
   });
 
   it('leaves in order of shyness over a long absence', () => {

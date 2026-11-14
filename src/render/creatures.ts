@@ -95,6 +95,12 @@ const ANIMAL_SIZE: Record<string, [number, number]> = {
   fish: [0.36, 0.2],
   bird: [0.26, 0.24],
   owl: [0.28, 0.36],
+  snowhare: [0.5, 0.65],
+  kingfisher: [0.26, 0.24],
+  stag: [0.85, 1.36],
+  swan: [0.6, 0.56],
+  heron: [0.5, 0.88],
+  peacock: [0.9, 0.75],
 };
 
 const ANIMALS: Record<string, Draw> = {
@@ -319,6 +325,101 @@ const ANIMALS: Record<string, Draw> = {
       ],
     };
   },
+};
+
+/** The same animal in other colours. */
+function recolor(draw: Draw, map: Record<string, string>): Draw {
+  const swap = (list?: PlantPart[]) => list?.map((p) => (map[p.color] ? { ...p, color: map[p.color], wiltColor: map[p.color] } : p));
+  return (u) => {
+    const sprite = draw(u);
+    return { ...sprite, parts: swap(sprite.parts)!, alt: swap(sprite.alt), rest: swap(sprite.rest) };
+  };
+}
+
+// --- daily visitors ---------------------------------------------------------
+
+ANIMALS.snowhare = (u) => {
+  const hare = recolor(ANIMALS.rabbit, { '#D8C6B2': '#F8F8F5', '#BFA992': '#E2E2DC', '#FFFFFF': '#FFFFFF' })(u);
+  // Black tips on the ears give the hare away.
+  const tips = pb();
+  tips.addCircle(0.055 * u, -0.635 * u, 0.022 * u).addCircle(0.232 * u, -0.635 * u, 0.022 * u);
+  return { parts: [...hare.parts, part(tips.build(), DARK)] };
+};
+
+ANIMALS.kingfisher = recolor(ANIMALS.bird, { '#4A9FE0': '#19A7CE', '#2F7FC1': '#0E6E96', '#FCE9C8': '#F08A3C', '#F2A33A': '#3B2618' });
+
+ANIMALS.stag = (u) => {
+  const deer = recolor(ANIMALS.deer, { '#B98558': '#94633E', '#8A5F3C': '#6E4A2E', '#A87449': '#855A38', '#F1DCC2': '#94633E' })(u);
+  const antlers = pb();
+  for (const [x0, lean] of [[0.31, -1], [0.38, 1]] as const) {
+    const x = x0 * u;
+    antlers.moveTo(x, -0.94 * u).quadTo(x + lean * 0.06 * u, -1.1 * u, x + lean * 0.03 * u, -1.32 * u);
+    antlers.moveTo(x + lean * 0.035 * u, -1.06 * u).lineTo(x + lean * 0.14 * u, -1.16 * u);
+    antlers.moveTo(x + lean * 0.045 * u, -1.17 * u).lineTo(x + lean * 0.15 * u, -1.28 * u);
+    antlers.moveTo(x + lean * 0.035 * u, -1.26 * u).lineTo(x - lean * 0.03 * u, -1.36 * u);
+  }
+  return { parts: [...deer.parts, part(antlers.build(), '#E9DCC3', { stroke: Math.max(1.5, 0.03 * u) }), part(oval(0.08 * u, -0.45 * u, 0.13 * u, 0.06 * u), '#D9C3A3', { opacity: 0.55 })] };
+};
+
+ANIMALS.swan = (u) => ({
+  parts: [
+    part(oval(0, 0, 0.32 * u, 0.06 * u), '#FFFFFF', { opacity: 0.45 }),
+    part(leafPath(-0.2 * u, -0.14 * u, 205, 0.16 * u, 0.06 * u), '#EDEFF2'),
+    part(oval(-0.02 * u, -0.11 * u, 0.25 * u, 0.12 * u), '#FFFFFF'),
+    part(leafPath(-0.14 * u, -0.16 * u, 20, 0.26 * u, 0.07 * u), '#EDEFF2'),
+    part(pb().moveTo(0.17 * u, -0.14 * u).cubicTo(0.3 * u, -0.22 * u, 0.12 * u, -0.38 * u, 0.24 * u, -0.5 * u).build(), '#FFFFFF', { stroke: Math.max(2, 0.07 * u) }),
+    part(Skia.Path.Circle(0.25 * u, -0.5 * u, 0.055 * u), '#FFFFFF'),
+    part(leafPath(0.28 * u, -0.48 * u, 22, 0.12 * u, 0.03 * u), '#F08A3C'),
+    part(Skia.Path.Circle(0.295 * u, -0.5 * u, 0.02 * u), DARK),
+    part(Skia.Path.Circle(0.255 * u, -0.515 * u, 0.012 * u), DARK),
+  ],
+});
+
+ANIMALS.heron = (u) => ({
+  parts: [
+    part(pb().moveTo(-0.03 * u, -0.34 * u).lineTo(-0.05 * u, 0).moveTo(0.05 * u, -0.34 * u).lineTo(0.07 * u, -0.17 * u).lineTo(0.04 * u, 0).build(), '#C9A64A', { stroke: Math.max(1.5, 0.022 * u) }),
+    part(leafPath(-0.1 * u, -0.4 * u, 160, 0.2 * u, 0.05 * u), '#6F7F8C'),
+    part(oval(0, -0.42 * u, 0.17 * u, 0.1 * u, -18), '#9FB0BD'),
+    part(leafPath(-0.12 * u, -0.4 * u, 12, 0.24 * u, 0.055 * u), '#7C8D9A'),
+    part(pb().moveTo(0.11 * u, -0.47 * u).cubicTo(0.24 * u, -0.56 * u, 0.06 * u, -0.68 * u, 0.17 * u, -0.8 * u).build(), '#DCE4EA', { stroke: Math.max(2, 0.045 * u) }),
+    part(Skia.Path.Circle(0.18 * u, -0.81 * u, 0.05 * u), '#F4F7F9'),
+    part(leafPath(0.17 * u, -0.85 * u, 190, 0.17 * u, 0.018 * u), DARK),
+    part(leafPath(0.21 * u, -0.8 * u, 12, 0.19 * u, 0.022 * u), '#E9B93A'),
+    part(Skia.Path.Circle(0.2 * u, -0.82 * u, 0.012 * u), DARK),
+  ],
+});
+
+ANIMALS.peacock = (u) => {
+  // The train: a fan of feathers behind the bird, each with an eye.
+  const fan = pb();
+  const eyes = pb();
+  const pupils = pb();
+  for (let i = 0; i < 7; i++) {
+    const a = (-168 + i * 22) * DEG;
+    const len = 0.5 * u;
+    fan.moveTo(-0.08 * u, -0.22 * u).lineTo(-0.08 * u + Math.cos(a - 0.17) * len, -0.22 * u + Math.sin(a - 0.17) * len).lineTo(-0.08 * u + Math.cos(a + 0.17) * len, -0.22 * u + Math.sin(a + 0.17) * len).close();
+    const ex = -0.08 * u + Math.cos(a) * len * 0.8;
+    const ey = -0.22 * u + Math.sin(a) * len * 0.8;
+    eyes.addCircle(ex, ey, 0.045 * u);
+    pupils.addCircle(ex, ey, 0.022 * u);
+  }
+  const crest = pb();
+  for (const dx of [-0.03, 0, 0.03]) crest.moveTo(0.2 * u, -0.6 * u).lineTo((0.2 + dx) * u, -0.7 * u);
+  return {
+    parts: [
+      part(fan.build(), '#2E9E6B'),
+      part(eyes.build(), '#E3C94A'),
+      part(pupils.build(), '#1F4FA8'),
+      part(legs([-0.03 * u, 0.06 * u], -0.14 * u, 0.025 * u), '#8A7A5A'),
+      part(oval(0, -0.22 * u, 0.17 * u, 0.11 * u, -12), '#1F6FC2'),
+      part(pb().moveTo(0.1 * u, -0.28 * u).quadTo(0.2 * u, -0.38 * u, 0.19 * u, -0.54 * u).build(), '#1F6FC2', { stroke: Math.max(2, 0.055 * u) }),
+      part(Skia.Path.Circle(0.2 * u, -0.56 * u, 0.05 * u), '#2A7FD6'),
+      part(crest.build(), '#1F6FC2', { stroke: Math.max(1, 0.012 * u) }),
+      part(leafPath(0.24 * u, -0.55 * u, 10, 0.08 * u, 0.02 * u), '#E9DCC3'),
+      part(Skia.Path.Circle(0.215 * u, -0.57 * u, 0.012 * u), '#FFFFFF'),
+      part(Skia.Path.Circle(0.218 * u, -0.57 * u, 0.007 * u), DARK),
+    ],
+  };
 };
 
 const TERRAIN: Record<TerrainKind, Draw> = {

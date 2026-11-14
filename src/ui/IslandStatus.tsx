@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 import { moodOf, vitalityNow, type VitalityMood } from '../game/decay';
 import { threats, type Threat } from '../game/stakes';
+import { getVisitor, visitorHere, visitorWaiting } from '../game/visitors';
 import { useStore } from '../store/store';
 import { Txt } from './kit';
 import { threatLevel, threatText } from './stakesText';
@@ -43,6 +44,9 @@ export function IslandStatus({ style, compact = false }: { style?: StyleProp<Vie
   if (!hasIsland) return null;
   const color = MOOD_COLOR[moodOf(vitality)];
   const threat = next[0];
+  const game = useStore((s) => s.game);
+  const waiting = getVisitor(visitorWaiting(game, now));
+  const here = getVisitor(visitorHere(game, now));
   const level = threat ? threatLevel(threat, now) : 'calm';
   return (
     <View style={[styles.card, style]} testID="island-status" accessibilityLabel={`Island health ${Math.round(vitality * 100)} percent`}>
@@ -60,6 +64,20 @@ export function IslandStatus({ style, compact = false }: { style?: StyleProp<Vie
           <View style={[styles.dot, { backgroundColor: LEVEL_COLOR[level] }]} />
           <Txt weight="heavy" size={12.5} color={LEVEL_COLOR[level]} numberOfLines={1} style={{ flex: 1 }} testID="next-threat">
             {threatText(threat, now)}
+          </Txt>
+        </View>
+      )}
+      {(waiting || here) && (
+        <View style={[styles.row, { marginTop: 5 }]}>
+          <Txt size={11} style={{ width: 18 }}>
+            🧳
+          </Txt>
+          <Txt weight="heavy" size={12.5} color={here ? colors.leafDark : colors.inkSoft} numberOfLines={1} style={{ flex: 1 }} testID="visitor-line">
+            {here
+              ? `The ${here.name} is visiting today`
+              : game.nature.visitors[waiting!.id]
+                ? `The ${waiting!.name} is passing by: focus 10 min and it lands`
+                : 'A stranger is passing by: focus 10 min to meet it'}
           </Txt>
         </View>
       )}

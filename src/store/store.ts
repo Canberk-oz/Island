@@ -40,6 +40,8 @@ export interface Settings {
   focusAmbience: boolean;
   /** Island level the player last saw on the island (drives the level-up moment). */
   lastSeenLevel: number;
+  /** "visitor:day" of the visitor that was last welcomed on the island. */
+  lastVisitorSeen: string;
   /** Developer: force a season or a kind of weather. */
   seasonOverride: Season | null;
   weatherOverride: Weather | null;
@@ -57,6 +59,7 @@ const DEFAULT_SETTINGS: Settings = {
   south: false,
   focusAmbience: true,
   lastSeenLevel: 0,
+  lastVisitorSeen: '',
   seasonOverride: null,
   weatherOverride: null,
 };
@@ -145,7 +148,7 @@ export const useStore = create<Store>((set, get) => {
         return res.graceUsed ? ('grace' as const) : ('running' as const);
       case 'completed':
         set({ game: res.state, result: { kind: 'completed', summary: res.summary } });
-        log('session:completed', `seed=${res.summary.seed.speciesId} rarity=${res.summary.seed.rarity}`);
+        log('session:completed', res.summary.seed ? `seed=${res.summary.seed.speciesId} rarity=${res.summary.seed.rarity}${res.summary.seed.variant ? ` variant=${res.summary.seed.variant}` : ''}` : 'seed=none');
         for (const n of res.summary.news) log(`island:${n.kind}`, n.subject);
         return 'completed' as const;
       case 'withered':
